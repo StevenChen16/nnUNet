@@ -7,6 +7,7 @@ from typing import Union, List
 from einops import rearrange as einops_rearrange
 
 
+@dynamo.disable
 def rearrange(tensor, pattern, **axes_lengths):
     """Simple rearrange implementation for basic patterns"""
     if pattern == 'b c h w d -> b h w d c':
