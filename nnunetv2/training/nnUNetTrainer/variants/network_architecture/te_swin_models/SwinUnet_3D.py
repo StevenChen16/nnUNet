@@ -47,10 +47,9 @@ def rearrange(tensor, pattern, **axes_lengths):
             w_y = width // nw_y if nw_y > 0 else w_y
             w_z = depth // nw_z if nw_z > 0 else w_z
         
-        # 使用einops替代复杂的permute+view操作
-        return einops_rearrange(tensor, 
-                         'b nw_x w_x nw_y w_y nw_z w_z h d -> b h (nw_x nw_y nw_z) (w_x w_y w_z) d',
-                         nw_x=nw_x, nw_y=nw_y, nw_z=nw_z, w_x=w_x, w_y=w_y, w_z=w_z)
+        # 使用原始方式先reshape，但添加dynamo.disable装饰器避免PyTorch编译器问题
+        reshaped = tensor.view(b, nw_x, w_x, nw_y, w_y, nw_z, w_z, h, d)
+        return reshaped.permute(0, 7, 1, 3, 5, 2, 4, 6, 8).contiguous().view(b, h, nw_x*nw_y*nw_z, w_x*w_y*w_z, d)
     elif pattern.startswith('b h (nw_x nw_y nw_z) (w_x w_y w_z) d -> b (nw_x w_x) (nw_y w_y) (nw_z w_z) (h d)'):
         # For window attention reverse reshape
         b, h, num_windows, window_size, d = tensor.shape
@@ -72,10 +71,9 @@ def rearrange(tensor, pattern, **axes_lengths):
             w_y = max(1, int(round((w_total / w_x) ** 0.5)))
             w_z = max(1, w_total // (w_x * w_y))
         
-        # 使用einops替代复杂的permute+view操作
-        return einops_rearrange(tensor,
-                         'b h nw_x nw_y nw_z w_x w_y w_z d -> b (nw_x w_x) (nw_y w_y) (nw_z w_z) (h d)',
-                         nw_x=nw_x, nw_y=nw_y, nw_z=nw_z, w_x=w_x, w_y=w_y, w_z=w_z)
+        # 使用原始方式先reshape，但添加dynamo.disable装饰器避免PyTorch编译器问题
+        reshaped = tensor.view(b, h, nw_x, nw_y, nw_z, w_x, w_y, w_z, d)
+        return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(b, nw_x*w_x, nw_y*w_y, nw_z*w_z, h*d)
     elif 'b h (n_x n_y n_z) i j -> b h n_y n_z n_x i j' in pattern:
         # For attention mask rearrangement
         b, h, n_total, i, j = tensor.shape
