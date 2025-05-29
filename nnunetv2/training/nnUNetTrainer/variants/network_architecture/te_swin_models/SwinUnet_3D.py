@@ -3,6 +3,7 @@ from torch import nn, einsum
 import torch.nn.functional as F
 import numpy as np
 from typing import Union, List
+from torch._dynamo import dynamo
 # 导入einops以替代复杂的permute+view操作
 from einops import rearrange as einops_rearrange
 
