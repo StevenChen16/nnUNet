@@ -26,7 +26,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     """
     
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
-                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+                 device: torch.device = torch.device('cuda')):
         """
         Initialize TE-Swin UNet3D trainer.
         
@@ -35,11 +35,9 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             configuration: Configuration name
             fold: Cross-validation fold
             dataset_json: Dataset configuration
-            unpack_dataset: Whether to unpack dataset
             device: Training device
         """
-        # Don't pass unpack_dataset to parent as it's not in its signature
-        # This avoids the KeyError: 'args' issue in the parent's locals() call
+        # Only pass parameters that exist in the parent class's signature to avoid KeyError
         super().__init__(plans=plans, configuration=configuration, fold=fold, dataset_json=dataset_json, device=device)
         
         # Model variant - can be 't' (tiny), 's' (small), or 'b' (base)
@@ -140,8 +138,10 @@ class nnUNetTrainer_TE_SwinUnet3D_small(nnUNetTrainer_TE_SwinUnet3D):
     """Small variant of TE-Swin UNet3D trainer."""
     
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
-                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+                 device: torch.device = torch.device('cuda')):
+        # Use named parameters to avoid issues with parameter passing
+        super().__init__(plans=plans, configuration=configuration, fold=fold, 
+                         dataset_json=dataset_json, device=device)
         self.model_variant = 's'
         
 
@@ -149,8 +149,10 @@ class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
     """Tiny variant of TE-Swin UNet3D trainer."""
     
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
-                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+                 device: torch.device = torch.device('cuda')):
+        # Use named parameters to avoid issues with parameter passing
+        super().__init__(plans=plans, configuration=configuration, fold=fold, 
+                         dataset_json=dataset_json, device=device)
         self.model_variant = 't'
         
     @staticmethod
@@ -180,8 +182,10 @@ class nnUNetTrainer_TE_SwinUnet3D_base(nnUNetTrainer_TE_SwinUnet3D):
     """Base variant of TE-Swin UNet3D trainer."""
     
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
-                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+                 device: torch.device = torch.device('cuda')):
+        # Use named parameters to avoid issues with parameter passing
+        super().__init__(plans=plans, configuration=configuration, fold=fold, 
+                         dataset_json=dataset_json, device=device)
         self.model_variant = 'b'
         
     @staticmethod
