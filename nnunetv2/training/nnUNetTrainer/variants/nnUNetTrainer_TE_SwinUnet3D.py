@@ -38,7 +38,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             unpack_dataset: Whether to unpack dataset
             device: Training device
         """
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         
         # Model variant - can be 't' (tiny), 's' (small), or 'b' (base)
         self.model_variant = 's'  # Default to small model
