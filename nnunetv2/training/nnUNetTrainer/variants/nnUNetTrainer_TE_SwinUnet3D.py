@@ -137,16 +137,18 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
 class nnUNetTrainer_TE_SwinUnet3D_small(nnUNetTrainer_TE_SwinUnet3D):
     """Small variant of TE-Swin UNet3D trainer."""
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.model_variant = 's'
         
 
 class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
     """Tiny variant of TE-Swin UNet3D trainer."""
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.model_variant = 't'
         
     @staticmethod
@@ -175,8 +177,9 @@ class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
 class nnUNetTrainer_TE_SwinUnet3D_base(nnUNetTrainer_TE_SwinUnet3D):
     """Base variant of TE-Swin UNet3D trainer."""
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.model_variant = 'b'
         
     @staticmethod
