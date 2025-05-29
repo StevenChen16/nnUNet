@@ -38,7 +38,9 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             unpack_dataset: Whether to unpack dataset
             device: Training device
         """
-        super().__init__(plans, configuration, fold, dataset_json, device)
+        # Don't pass unpack_dataset to parent as it's not in its signature
+        # This avoids the KeyError: 'args' issue in the parent's locals() call
+        super().__init__(plans=plans, configuration=configuration, fold=fold, dataset_json=dataset_json, device=device)
         
         # Model variant - can be 't' (tiny), 's' (small), or 'b' (base)
         self.model_variant = 's'  # Default to small model
