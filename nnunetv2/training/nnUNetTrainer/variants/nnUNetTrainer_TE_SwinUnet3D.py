@@ -44,39 +44,38 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         self.model_variant = 's'  # Default to small model
         
     @staticmethod  
-    def build_network_architecture(plans_manager: PlansManager,
-                                   dataset_json,
-                                   configuration_manager: ConfigurationManager,
-                                   num_input_channels,
+    def build_network_architecture(architecture_class_name: str,
+                                   arch_init_kwargs: dict,
+                                   arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
+                                   num_input_channels: int,
+                                   num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """
         Build the TE-Swin UNet3D network architecture.
         
         Args:
-            plans_manager: Plans manager instance
-            dataset_json: Dataset configuration
-            configuration_manager: Configuration manager instance
+            architecture_class_name: Name of the architecture class (not used in this implementation)
+            arch_init_kwargs: Architecture initialization kwargs (not used in this implementation)
+            arch_init_kwargs_req_import: Required imports (not used in this implementation)
             num_input_channels: Number of input channels
+            num_output_channels: Number of output channels/classes
             enable_deep_supervision: Whether to enable deep supervision
             
         Returns:
             torch.nn.Module: TE-Swin UNet3D model
         """
-        # Get number of output classes
-        num_classes = len(dataset_json['labels'].keys())
-        
         # Create TE-Swin UNet3D model (small variant by default)
         model = create_te_swinunet_s_3d(
             input_channels=num_input_channels,
-            num_classes=num_classes,
+            num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
-            # Use patch size from configuration if available
-            window_size=7,  # Fixed window size for now
+            # Use fixed window size for now
+            window_size=7,
             dropout=0.0,
         )
         
         print(f"Created TE-Swin UNet3D with {num_input_channels} input channels, "
-              f"{num_classes} output classes, deep supervision: {enable_deep_supervision}")
+              f"{num_output_channels} output classes, deep supervision: {enable_deep_supervision}")
         
         return model
 
@@ -156,24 +155,24 @@ class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
         self.model_variant = 't'
         
     @staticmethod
-    def build_network_architecture(plans_manager: PlansManager,
-                                   dataset_json,
-                                   configuration_manager: ConfigurationManager,
-                                   num_input_channels,
+    def build_network_architecture(architecture_class_name: str,
+                                   arch_init_kwargs: dict,
+                                   arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
+                                   num_input_channels: int,
+                                   num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """Build tiny TE-Swin UNet3D."""
-        num_classes = len(dataset_json['labels'].keys())
         
         model = create_te_swinunet_t_3d(
             input_channels=num_input_channels,
-            num_classes=num_classes,
+            num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
             window_size=7,
             dropout=0.0,
         )
         
         print(f"Created tiny TE-Swin UNet3D with {num_input_channels} input channels, "
-              f"{num_classes} output classes")
+              f"{num_output_channels} output classes")
         
         return model
 
@@ -189,23 +188,23 @@ class nnUNetTrainer_TE_SwinUnet3D_base(nnUNetTrainer_TE_SwinUnet3D):
         self.model_variant = 'b'
         
     @staticmethod
-    def build_network_architecture(plans_manager: PlansManager,
-                                   dataset_json,
-                                   configuration_manager: ConfigurationManager,
-                                   num_input_channels,
+    def build_network_architecture(architecture_class_name: str,
+                                   arch_init_kwargs: dict,
+                                   arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
+                                   num_input_channels: int,
+                                   num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """Build base TE-Swin UNet3D."""
-        num_classes = len(dataset_json['labels'].keys())
         
         model = create_te_swinunet_b_3d(
             input_channels=num_input_channels,
-            num_classes=num_classes,
+            num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
             window_size=7,
             dropout=0.0,
         )
         
         print(f"Created base TE-Swin UNet3D with {num_input_channels} input channels, "
-              f"{num_classes} output classes")
+              f"{num_output_channels} output classes")
         
         return model
