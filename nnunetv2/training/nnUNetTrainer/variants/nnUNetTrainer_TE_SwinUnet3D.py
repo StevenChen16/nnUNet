@@ -23,19 +23,17 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
-        device: torch.device = torch.device('cuda')
+        unpack_dataset: bool = True
     ):
         """
         Initialize the TE-Swin UNet3D trainer.
         """
-        # 调用父类初始化
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        # 调用父类初始化，nnUNetTrainer不接受unpack_dataset参数
+        super().__init__(plans, configuration, fold, dataset_json)
         
         print("🎯 TE-Swin UNet3D Trainer initialized")
         print(f"   - Configuration: {configuration}")
         print(f"   - Fold: {fold}")
-        print(f"   - Device: {device}")
         print(f"   - Deep supervision: {self.enable_deep_supervision}")
         
     def build_network_architecture(self, architecture_class_name: str,
@@ -150,59 +148,13 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         """
         Execute a single training step.
         """
-        data = batch['data']
-        target = batch['target']
-        
-        data = data.to(self.device, non_blocking=True)
-        if isinstance(target, list):
-            target = [i.to(self.device, non_blocking=True) for i in target]
-        else:
-            target = target.to(self.device, non_blocking=True)
-        
-        self.optimizer.zero_grad(set_to_none=True)
-        
-        # Forward pass
-        output = self.network(data)
-        
-        # Loss computation
-        l = self.loss(output, target)
-        
-        # Backward pass
-        if self.grad_scaler is not None:
-            self.grad_scaler.scale(l).backward()
-            self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
-            self.grad_scaler.step(self.optimizer)
-            self.grad_scaler.update()
-        else:
-            l.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
-            self.optimizer.step()
-        
-        return {'loss': l.detach().cpu().numpy()}
+        return super().train_step(batch)
     
     def validation_step(self, batch: dict) -> dict:
         """
         Execute a single validation step.
         """
-        data = batch['data']
-        target = batch['target']
-        
-        data = data.to(self.device, non_blocking=True)
-        if isinstance(target, list):
-            target = [i.to(self.device, non_blocking=True) for i in target]
-        else:
-            target = target.to(self.device, non_blocking=True)
-        
-        # Forward pass
-        self.network.eval()
-        with torch.no_grad():
-            output = self.network(data)
-        
-        # Loss computation
-        l = self.loss(output, target)
-        
-        return {'loss': l.detach().cpu().numpy()}
+        return super().validation_step(batch)
 
 
 class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
