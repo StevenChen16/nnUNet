@@ -137,7 +137,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         super().on_train_start()
             
     def train_step(self, batch):
-        """修复的训练步骤 - 正确处理数据格式"""
+        """修复的训练步骤 - 正确处理数据格式和尺寸"""
         # ✅ 正确处理数据 - 可能是列表或张量
         data = batch['data']
         target = batch['target']
@@ -155,6 +155,22 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         else:
             if hasattr(target, 'device') and target.device != self.device:
                 target = target.to(self.device, non_blocking=True)
+        
+        # ✅ 记录输入和目标的尺寸用于调试
+        if hasattr(data, 'shape'):
+            input_shape = data.shape[2:] if len(data.shape) > 2 else data.shape
+        else:
+            input_shape = "list_format"
+            
+        if hasattr(target, 'shape'):
+            target_shape = target.shape[1:] if len(target.shape) > 1 else target.shape  
+        else:
+            target_shape = "list_format"
+            
+        # 只在第一个batch时打印尺寸信息，避免日志过多
+        if not hasattr(self, '_logged_shapes'):
+            self.print_to_log_file(f"🔍 Input shape: {input_shape}, Target shape: {target_shape}")
+            self._logged_shapes = True
                 
         batch['data'] = data
         batch['target'] = target
