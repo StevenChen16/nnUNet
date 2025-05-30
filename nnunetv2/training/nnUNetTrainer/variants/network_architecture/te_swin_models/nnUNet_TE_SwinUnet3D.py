@@ -40,7 +40,7 @@ class SimpleDecoderProxy:
         print(f"🔧 TE-Swin UNet3D deep supervision set to: {value}")
 
 
-class nnUNet_TE_SwinUnet3D_Fixed(nn.Module):
+class nnUNet_TE_SwinUnet3D(nn.Module):
     """
     FIXED VERSION: nnUNet-compatible Texture-Enhanced Swin UNet3D.
     主要修复：解决输出尺寸不匹配问题
@@ -507,7 +507,7 @@ class nnUNet_TE_SwinUnet3D_Fixed(nn.Module):
 
 
 # ✅ 修复后的模型创建函数
-def create_te_swinunet_s_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+def create_te_swinunet_s_3d(input_channels: int, num_classes: int, **kwargs):
     """Create a small TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 96,
@@ -520,14 +520,14 @@ def create_te_swinunet_s_3d_fixed(input_channels: int, num_classes: int, **kwarg
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D_Fixed(
+    return nnUNet_TE_SwinUnet3D(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params
     )
 
 
-def create_te_swinunet_t_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+def create_te_swinunet_t_3d(input_channels: int, num_classes: int, **kwargs):
     """Create a tiny TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 48,
@@ -540,14 +540,14 @@ def create_te_swinunet_t_3d_fixed(input_channels: int, num_classes: int, **kwarg
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D_Fixed(
+    return nnUNet_TE_SwinUnet3D(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params
     )
 
 
-def create_te_swinunet_b_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+def create_te_swinunet_b_3d(input_channels: int, num_classes: int, **kwargs):
     """Create a base TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 128,
@@ -560,7 +560,7 @@ def create_te_swinunet_b_3d_fixed(input_channels: int, num_classes: int, **kwarg
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D_Fixed(
+    return nnUNet_TE_SwinUnet3D(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params

@@ -7,13 +7,13 @@ from typing import Union, Tuple, List
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.te_swin_models.nnUNet_TE_SwinUnet3D import (
-    create_te_swinunet_s_3d_fixed,
-    create_te_swinunet_t_3d_fixed,
-    create_te_swinunet_b_3d_fixed
+    create_te_swinunet_s_3d,
+    create_te_swinunet_t_3d,
+    create_te_swinunet_b_3d
 )
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Fixed(nnUNetTrainer):
+class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     """
     FIXED VERSION: nnUNet Trainer for TE-Swin UNet3D that resolves output size mismatch issues.
     """
