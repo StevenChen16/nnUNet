@@ -312,7 +312,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         # Deep supervision from bottleneck
         if self._deep_supervision and self.training:
             ds_out = self.deep_supervision_heads[0](x)
-            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
+            # 确保深度监督输出尺寸正确
+            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Create multi-scale texture pyramid
@@ -329,7 +330,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         if self._deep_supervision and self.training:
             ds_out = self.deep_supervision_heads[1](x)
-            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
+            # 确保深度监督输出尺寸正确
+            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Stage 3 decoder
@@ -341,7 +343,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         if self._deep_supervision and self.training:
             ds_out = self.deep_supervision_heads[2](x)
-            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
+            # 确保深度监督输出尺寸正确
+            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Stage 1-2 decoder
@@ -353,7 +356,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         if self._deep_supervision and self.training:
             ds_out = self.deep_supervision_heads[3](x)
-            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
+            # 确保深度监督输出尺寸正确
+            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Final upsampling and output head
