@@ -23,13 +23,12 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
         device: torch.device = torch.device('cuda')
     ):
         """
         Initialize the TE-Swin UNet3D trainer.
         """
-        # 调用父类初始化，只传递父类需要的参数
+        # 调用父类初始化，签名完全一致
         super().__init__(plans, configuration, fold, dataset_json, device)
         
         print("🎯 TE-Swin UNet3D Trainer initialized")
