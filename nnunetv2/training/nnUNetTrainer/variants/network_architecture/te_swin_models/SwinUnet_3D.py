@@ -12,15 +12,11 @@ from einops import rearrange as einops_rearrange
 def rearrange(tensor, pattern, **axes_lengths):
     """Simple rearrange implementation for basic patterns"""
     # 添加调试信息 - 防止在非分布式环境中报错
-    try:
-        is_main_process = not torch.distributed.is_available() or not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
-        if is_main_process:
-            print(f"Rearrange pattern: {pattern}")
-            print(f"Input tensor shape: {tensor.shape}")
-            print(f"Parameters: {axes_lengths}")
-    except:
-        # 当分布式环境未初始化时，安全地跳过
-        pass
+    is_main_process = not torch.distributed.is_available() or not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+    if is_main_process:
+        print(f"Rearrange pattern: {pattern}")
+        print(f"Input tensor shape: {tensor.shape}")
+        print(f"Parameters: {axes_lengths}")
         
     if pattern == 'b c h w d -> b h w d c':
         return tensor.permute(0, 2, 3, 4, 1)
@@ -460,7 +456,7 @@ class PatchMerging3D(nn.Module):
 
 
 class PatchExpanding3D(nn.Module):
-    def __init__(self, in_dim, out_dim, up_scaling_factor):
+    def __init__(self, in_dim, out_dim, up_scaling_factor, window_size=None):
         super(PatchExpanding3D, self).__init__()
         stride = up_scaling_factor
         kernel_size = up_scaling_factor
@@ -469,9 +465,41 @@ class PatchExpanding3D(nn.Module):
             nn.ConvTranspose3d(in_dim, out_dim, kernel_size=kernel_size, stride=stride, padding=padding),
             Norm(out_dim),
         )
+        # 存储窗口大小用于自适应填充
+        if window_size is None:
+            self.window_size = None
+        elif isinstance(window_size, int):
+            self.window_size = np.array([window_size, window_size, window_size])
+        else:
+            self.window_size = np.array(window_size)
+            
+        # 记录当前填充情况，便于后续处理（比如在loss计算时可以移除填充）
+        self.padding_values = [0, 0, 0]
 
     def forward(self, x):
         x = self.net(x)
+        
+        # 如果设置了窗口大小，执行自适应填充确保尺寸能被窗口大小整除
+        if self.window_size is not None:
+            _, _, D, H, W = x.shape
+            
+            # 计算每个维度需要的填充量
+            pad_D = (self.window_size[0] - D % self.window_size[0]) % self.window_size[0]
+            pad_H = (self.window_size[1] - H % self.window_size[1]) % self.window_size[1]
+            pad_W = (self.window_size[2] - W % self.window_size[2]) % self.window_size[2]
+            
+            # 更新填充记录
+            self.padding_values = [pad_D, pad_H, pad_W]
+            
+            # 只有在需要填充时才进行填充
+            if pad_D > 0 or pad_H > 0 or pad_W > 0:
+                print(f"Applying padding: depth={pad_D}, height={pad_H}, width={pad_W}")
+                print(f"Input shape: {x.shape}, expected divisible by {self.window_size}")
+                
+                # 执行填充 - 在右/下/后方向填充
+                x = F.pad(x, (0, pad_W, 0, pad_H, 0, pad_D))
+                print(f"Output shape after padding: {x.shape}")
+        
         return x
 
 
@@ -555,8 +583,10 @@ class Decoder(nn.Module):
         super().__init__()
         assert layers % 2 == 0, 'Stage layers need to be divisible by 2 for regular and shifted block.'
 
+        # 传递window_size参数给PatchExpanding3D以实现自适应填充
         self.patch_expand = PatchExpanding3D(in_dim=in_dims, out_dim=out_dims,
-                                             up_scaling_factor=up_scaling_factor)
+                                             up_scaling_factor=up_scaling_factor,
+                                             window_size=window_size)  # 添加window_size参数
 
         self.conv_block = ConvBlock(in_ch=out_dims, out_ch=out_dims)
         self.re1 = Rearrange('b c h w d -> b h w d c')
