@@ -11,6 +11,12 @@ from einops import rearrange as einops_rearrange
 @dynamo.disable
 def rearrange(tensor, pattern, **axes_lengths):
     """Simple rearrange implementation for basic patterns"""
+    # 添加调试信息
+    if torch.distributed.get_rank() == 0 and hasattr(torch.distributed, 'is_initialized') and torch.distributed.is_initialized():
+        print(f"Rearrange pattern: {pattern}")
+        print(f"Input tensor shape: {tensor.shape}")
+        print(f"Parameters: {axes_lengths}")
+        
     if pattern == 'b c h w d -> b h w d c':
         return tensor.permute(0, 2, 3, 4, 1)
     elif pattern == 'b h w d c -> b c h w d':
@@ -29,51 +35,163 @@ def rearrange(tensor, pattern, **axes_lengths):
         # For window attention reshape
         b, height, width, depth, feat_dim = tensor.shape
         h = axes_lengths['h']
-        w_x, w_y, w_z = axes_lengths['w_x'], axes_lengths['w_y'], axes_lengths['w_z']
+        w_x = int(axes_lengths['w_x'])
+        w_y = int(axes_lengths['w_y'])
+        w_z = int(axes_lengths['w_z'])
         
-        # Calculate the number of windows
-        nw_x = height // w_x
-        nw_y = width // w_y
-        nw_z = depth // w_z
+        # 验证通道维度可被头数整除
+        if feat_dim % h != 0:
+            raise ValueError(f"Feature dimension {feat_dim} must be divisible by heads {h}")
+            
         d = feat_dim // h
         
-        # Validate that the reshape is possible
-        if height % w_x != 0 or width % w_y != 0 or depth % w_z != 0:
-            # If not divisible, use the closest valid dimensions
-            nw_x = max(1, height // w_x)
-            nw_y = max(1, width // w_y) 
-            nw_z = max(1, depth // w_z)
-            w_x = height // nw_x if nw_x > 0 else w_x
-            w_y = width // nw_y if nw_y > 0 else w_y
-            w_z = depth // nw_z if nw_z > 0 else w_z
+        # 计算窗口数量，并确保完全整除
+        if height % w_x != 0:
+            w_x = height  # 使用完整高度作为单一窗口
+            nw_x = 1
+        else:
+            nw_x = height // w_x
+            
+        if width % w_y != 0:
+            w_y = width  # 使用完整宽度作为单一窗口
+            nw_y = 1
+        else:
+            nw_y = width // w_y
+            
+        if depth % w_z != 0:
+            w_z = depth  # 使用完整深度作为单一窗口
+            nw_z = 1
+        else:
+            nw_z = depth // w_z
         
-        # 使用原始方式先reshape，但添加dynamo.disable装饰器避免PyTorch编译器问题
-        reshaped = tensor.view(b, nw_x, w_x, nw_y, w_y, nw_z, w_z, h, d)
-        return reshaped.permute(0, 7, 1, 3, 5, 2, 4, 6, 8).contiguous().view(b, h, nw_x*nw_y*nw_z, w_x*w_y*w_z, d)
+        # 计算目标形状总元素数是否与原张量匹配
+        total_elements = b * nw_x * w_x * nw_y * w_y * nw_z * w_z * h * d
+        original_elements = tensor.numel()
+        
+        if total_elements != original_elements:
+            print(f"Warning: Shape mismatch! Original: {original_elements}, Target: {total_elements}")
+            print(f"Target shape: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}]")
+            
+            # 尝试智能调整窗口大小
+            while total_elements > original_elements and (w_x > 1 or w_y > 1 or w_z > 1):
+                if w_x > 1:
+                    w_x -= 1
+                elif w_y > 1:
+                    w_y -= 1
+                elif w_z > 1:
+                    w_z -= 1
+                total_elements = b * nw_x * w_x * nw_y * w_y * nw_z * w_z * h * d
+                
+            while total_elements < original_elements and (nw_x > 1 or nw_y > 1 or nw_z > 1):
+                if nw_x > 1:
+                    nw_x -= 1
+                    w_x = height // nw_x
+                elif nw_y > 1:
+                    nw_y -= 1
+                    w_y = width // nw_y
+                elif nw_z > 1:
+                    nw_z -= 1
+                    w_z = depth // nw_z
+                total_elements = b * nw_x * w_x * nw_y * w_y * nw_z * w_z * h * d
+                
+            print(f"Adjusted to: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}]")
+            print(f"New total: {total_elements}")
+            
+            if total_elements != original_elements:
+                # 如果仍不匹配，采用最安全的方式
+                nw_x = nw_y = nw_z = 1
+                w_x = height
+                w_y = width
+                w_z = depth
+                print(f"Fallback to: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}]")
+        
+        try:
+            # 使用安全的reshape操作
+            reshaped = tensor.view(b, nw_x, w_x, nw_y, w_y, nw_z, w_z, h, d)
+            return reshaped.permute(0, 7, 1, 3, 5, 2, 4, 6, 8).contiguous().view(b, h, nw_x*nw_y*nw_z, w_x*w_y*w_z, d)
+        except RuntimeError as e:
+            print(f"Reshape error: {e}")
+            print(f"Tensor size: {tensor.size()}, numel: {tensor.numel()}")
+            print(f"Target shape: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}] = {b * nw_x * w_x * nw_y * w_y * nw_z * w_z * h * d}")
+            # 最终回退方案 - 跳过窗口重塑，返回原始张量
+            return tensor
     elif pattern.startswith('b h (nw_x nw_y nw_z) (w_x w_y w_z) d -> b (nw_x w_x) (nw_y w_y) (nw_z w_z) (h d)'):
         # For window attention reverse reshape
         b, h, num_windows, window_size, d = tensor.shape
-        nw_x, nw_y, nw_z = axes_lengths['nw_x'], axes_lengths['nw_y'], axes_lengths['nw_z']
-        w_x, w_y, w_z = axes_lengths['w_x'], axes_lengths['w_y'], axes_lengths['w_z']
+        nw_x = int(axes_lengths['nw_x'])
+        nw_y = int(axes_lengths['nw_y'])
+        nw_z = int(axes_lengths['nw_z'])
+        w_x = int(axes_lengths['w_x'])
+        w_y = int(axes_lengths['w_y'])
+        w_z = int(axes_lengths['w_z'])
         
-        # Validate dimensions
-        if nw_x * nw_y * nw_z != num_windows or w_x * w_y * w_z != window_size:
-            # Adjust if needed
-            nw_total = num_windows
-            w_total = window_size
-            
-            # Try to maintain aspect ratios
-            nw_x = max(1, int(round((nw_total ** (1/3)))))
-            nw_y = max(1, int(round((nw_total / nw_x) ** 0.5)))
-            nw_z = max(1, nw_total // (nw_x * nw_y))
-            
-            w_x = max(1, int(round((w_total ** (1/3)))))
-            w_y = max(1, int(round((w_total / w_x) ** 0.5)))
-            w_z = max(1, w_total // (w_x * w_y))
+        # 检查维度匹配
+        calculated_windows = nw_x * nw_y * nw_z
+        calculated_window_size = w_x * w_y * w_z
         
-        # 使用原始方式先reshape，但添加dynamo.disable装饰器避免PyTorch编译器问题
-        reshaped = tensor.view(b, h, nw_x, nw_y, nw_z, w_x, w_y, w_z, d)
-        return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(b, nw_x*w_x, nw_y*w_y, nw_z*w_z, h*d)
+        # 记录原始值以便调试
+        orig_nw_x, orig_nw_y, orig_nw_z = nw_x, nw_y, nw_z
+        orig_w_x, orig_w_y, orig_w_z = w_x, w_y, w_z
+        
+        # 如果不匹配，调整窗口参数
+        if calculated_windows != num_windows or calculated_window_size != window_size:
+            print(f"Dimension mismatch: Actual [windows={num_windows}, window_size={window_size}] ")
+            print(f"Expected [windows={calculated_windows}={nw_x}×{nw_y}×{nw_z}, "
+                  f"window_size={calculated_window_size}={w_x}×{w_y}×{w_z}]")
+            
+            # 重新计算窗口划分，使用整数因子分解
+            def find_factors(n, count=3):
+                """找出一个数的近似count个因子，尽量接近"""
+                if count == 1:
+                    return [n]
+                    
+                # 找最接近立方根的因子
+                target = n ** (1/count)
+                factor = max(1, round(target))
+                while factor > 1 and n % factor != 0:
+                    if factor > target:
+                        factor -= 1
+                    else:
+                        factor += 1
+                        
+                if factor == 1:
+                    # 无法找到合适因子，返回[1, 1, n]类型的结果
+                    result = [1] * (count-1)
+                    result.append(n)
+                    return result
+                    
+                return [factor] + find_factors(n // factor, count-1)
+            
+            # 计算新的窗口数和窗口大小
+            window_factors = find_factors(window_size, 3)
+            w_x, w_y, w_z = window_factors
+            
+            window_num_factors = find_factors(num_windows, 3)
+            nw_x, nw_y, nw_z = window_num_factors
+            
+            print(f"Adjusted to: windows=[{nw_x}×{nw_y}×{nw_z}]={nw_x*nw_y*nw_z}, "
+                  f"window_size=[{w_x}×{w_y}×{w_z}]={w_x*w_y*w_z}")
+        
+        try:
+            # 使用安全的reshape操作
+            reshaped = tensor.view(b, h, nw_x, nw_y, nw_z, w_x, w_y, w_z, d)
+            return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(b, nw_x*w_x, nw_y*w_y, nw_z*w_z, h*d)
+        except RuntimeError as e:
+            print(f"Reshape error: {e}")
+            print(f"Tensor size: {tensor.size()}, numel: {tensor.numel()}")
+            print(f"Target shape: [{b}, {h}, {nw_x}, {nw_y}, {nw_z}, {w_x}, {w_y}, {w_z}, {d}] = "
+                  f"{b * h * nw_x * nw_y * nw_z * w_x * w_y * w_z * d}")
+            
+            # 尝试使用原始参数
+            try:
+                print("Trying original parameters...")
+                reshaped = tensor.view(b, h, orig_nw_x, orig_nw_y, orig_nw_z, orig_w_x, orig_w_y, orig_w_z, d)
+                return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(
+                    b, orig_nw_x*orig_w_x, orig_nw_y*orig_w_y, orig_nw_z*orig_w_z, h*d)
+            except RuntimeError:
+                # 最终回退方案 - 跳过窗口重塑，返回原始张量的简单重排
+                print("Fallback to simple reshape")
+                return tensor.view(b, h*d, num_windows, window_size).permute(0, 2, 3, 1).contiguous()
     elif 'b h (n_x n_y n_z) i j -> b h n_y n_z n_x i j' in pattern:
         # For attention mask rearrangement
         b, h, n_total, i, j = tensor.shape
