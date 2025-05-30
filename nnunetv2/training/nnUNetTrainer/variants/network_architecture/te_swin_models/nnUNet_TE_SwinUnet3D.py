@@ -1,6 +1,6 @@
 """
-修复循环引用问题的 nnUNet-compatible TE-Swin UNet3D model implementation.
-主要修复：移除所有循环引用，使用属性访问而非对象引用
+FIXED VERSION: nnUNet-compatible TE-Swin UNet3D model implementation.
+主要修复：解决输出尺寸不匹配问题，确保输出与target尺寸一致
 """
 import torch 
 import torch.nn as nn
@@ -40,9 +40,10 @@ class SimpleDecoderProxy:
         print(f"🔧 TE-Swin UNet3D deep supervision set to: {value}")
 
 
-class nnUNet_TE_SwinUnet3D(nn.Module):
+class nnUNet_TE_SwinUnet3D_Fixed(nn.Module):
     """
-    修复循环引用问题的 nnUNet-compatible Texture-Enhanced Swin UNet3D.
+    FIXED VERSION: nnUNet-compatible Texture-Enhanced Swin UNet3D.
+    主要修复：解决输出尺寸不匹配问题
     """
     
     def __init__(
@@ -234,7 +235,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         # Initialize weights
         self.init_weights()
         
-        print(f"✅ TE-Swin UNet3D initialized with nnUNet compatibility (no circular references)")
+        print(f"✅ TE-Swin UNet3D FIXED initialized with nnUNet compatibility")
         print(f"   - Input channels: {input_channels}")
         print(f"   - Output classes: {num_classes}")  
         print(f"   - Deep supervision: {deep_supervision}")
@@ -258,15 +259,23 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
     def forward(self, x):
         """
-        Forward pass through the TE-Swin UNet3D.
-        简化版本，移除动态裁剪逻辑以兼容torch.compile
+        FIXED Forward pass through the TE-Swin UNet3D.
+        ✅ 主要修复：确保输出尺寸与原始输入尺寸一致
         """
+        # ✅ 记录原始输入尺寸
+        original_shape = x.shape[2:]  # D, H, W
+        b, c = x.shape[:2]
+        
         # Check input dimensions for compatibility
-        input_shape = x.shape[2:]  # D, H, W
-        valid, message = self.validate_dimensions(input_shape)
+        valid, message = self.validate_dimensions(original_shape)
+        padding_applied = False
+        padding_info = None
+        
         if not valid:
-            # Try to make compatible by padding
-            x = self._pad_to_compatible_size(x)
+            # Try to make compatible by padding and record padding info
+            x, padding_info = self._pad_to_compatible_size_with_info(x)
+            padding_applied = True
+            print(f"🔧 Applied padding: {original_shape} -> {x.shape[2:]}")
         
         # Store features for deep supervision
         deep_supervision_outputs = []
@@ -309,8 +318,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         # Deep supervision from bottleneck
         if self._deep_supervision and self.training:
-            ds_out = F.interpolate(self.deep_supervision_heads[0](x), 
-                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            ds_out = self.deep_supervision_heads[0](x)
+            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Create multi-scale texture pyramid
@@ -326,8 +335,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         x = self.converge4(x, fused_feat)
         
         if self._deep_supervision and self.training:
-            ds_out = F.interpolate(self.deep_supervision_heads[1](x), 
-                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            ds_out = self.deep_supervision_heads[1](x)
+            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Stage 3 decoder
@@ -338,8 +347,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         x = self.converge3(x, fused_feat)
         
         if self._deep_supervision and self.training:
-            ds_out = F.interpolate(self.deep_supervision_heads[2](x), 
-                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            ds_out = self.deep_supervision_heads[2](x)
+            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Stage 1-2 decoder
@@ -350,21 +359,119 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         x = self.converge12(x, fused_feat)
         
         if self._deep_supervision and self.training:
-            ds_out = F.interpolate(self.deep_supervision_heads[3](x), 
-                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            ds_out = self.deep_supervision_heads[3](x)
+            ds_out = F.interpolate(ds_out, size=x.shape[2:], mode='trilinear', align_corners=False)
             deep_supervision_outputs.append(ds_out)
         
         # Final upsampling and output head
         x = self.final(x)
         main_output = self.seg_head(x)
         
+        # ✅ 关键修复：如果应用了padding，需要将所有输出裁剪回原始尺寸
+        if padding_applied and padding_info is not None:
+            main_output = self._crop_to_original_size(main_output, original_shape, padding_info)
+            
+            # 同样处理深度监督输出
+            if self._deep_supervision and self.training and deep_supervision_outputs:
+                deep_supervision_outputs = [
+                    self._crop_to_original_size(ds_out, original_shape, padding_info)
+                    for ds_out in deep_supervision_outputs
+                ]
+        
+        # ✅ 额外安全检查：确保输出尺寸正确
+        expected_shape = (b, self.num_classes) + original_shape
+        if main_output.shape != expected_shape:
+            print(f"⚠️  Output shape mismatch! Expected: {expected_shape}, Got: {main_output.shape}")
+            main_output = F.interpolate(main_output, size=original_shape, mode='trilinear', align_corners=False)
+            print(f"🔧 Corrected main output shape to: {main_output.shape}")
+        
         # Return outputs based on training mode
         if self._deep_supervision and self.training:
+            # ✅ 检查深度监督输出尺寸
+            for i, ds_out in enumerate(deep_supervision_outputs):
+                if ds_out.shape != expected_shape:
+                    print(f"⚠️  DS output {i} shape mismatch! Expected: {expected_shape}, Got: {ds_out.shape}")
+                    deep_supervision_outputs[i] = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
+                    print(f"🔧 Corrected DS output {i} shape to: {deep_supervision_outputs[i].shape}")
+            
             # Return list of outputs for deep supervision
             all_outputs = [main_output] + deep_supervision_outputs
             return all_outputs
         else:
             return main_output
+    
+    def _pad_to_compatible_size_with_info(self, x):
+        """
+        Pad input to make it compatible with the model architecture.
+        ✅ 返回padding信息以便后续裁剪
+        """
+        window_size = self.window_size
+        if isinstance(window_size, int):
+            window_size = [window_size] * 3
+        
+        b, c, d, h, w = x.shape
+        original_size = (d, h, w)
+        
+        # Calculate required padding for each dimension
+        total_downscale = 1
+        for dsf in self.dsf:
+            total_downscale *= dsf
+        
+        target_d = ((d + total_downscale - 1) // total_downscale) * total_downscale
+        target_h = ((h + total_downscale - 1) // total_downscale) * total_downscale
+        target_w = ((w + total_downscale - 1) // total_downscale) * total_downscale
+        
+        # Further ensure compatibility with window size
+        target_d = ((target_d + window_size[0] - 1) // window_size[0]) * window_size[0]
+        target_h = ((target_h + window_size[1] - 1) // window_size[1]) * window_size[1]
+        target_w = ((target_w + window_size[2] - 1) // window_size[2]) * window_size[2]
+        
+        padding_info = {
+            'original_size': original_size,
+            'target_size': (target_d, target_h, target_w),
+            'padding_applied': False
+        }
+        
+        if target_d != d or target_h != h or target_w != w:
+            pad_d = target_d - d
+            pad_h = target_h - h
+            pad_w = target_w - w
+            
+            padding = (
+                0, pad_w,     # W dimension
+                0, pad_h,     # H dimension  
+                0, pad_d      # D dimension
+            )
+            x = F.pad(x, padding, mode='constant', value=0)
+            
+            padding_info.update({
+                'padding_applied': True,
+                'padding': padding,
+                'pad_d': pad_d,
+                'pad_h': pad_h,
+                'pad_w': pad_w
+            })
+            
+            print(f"🔧 Input padded from {original_size} to {(target_d,target_h,target_w)}")
+            
+        return x, padding_info
+    
+    def _crop_to_original_size(self, output, original_shape, padding_info):
+        """
+        ✅ 将输出裁剪回原始尺寸
+        """
+        if not padding_info['padding_applied']:
+            return output
+        
+        d_orig, h_orig, w_orig = original_shape
+        b, c, d_curr, h_curr, w_curr = output.shape
+        
+        # 裁剪到原始尺寸
+        output_cropped = output[:, :, :d_orig, :h_orig, :w_orig]
+        
+        print(f"🔧 Output cropped from {(d_curr, h_curr, w_curr)} to {(d_orig, h_orig, w_orig)}")
+        
+        return output_cropped
     
     def validate_dimensions(self, input_shape):
         """Validate that dimensions are compatible with the model architecture."""
@@ -385,43 +492,6 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         return True, "All dimensions are compatible"
     
-    def _pad_to_compatible_size(self, x):
-        """Pad input to make it compatible with the model architecture."""
-        window_size = self.window_size
-        if isinstance(window_size, int):
-            window_size = [window_size] * 3
-        
-        b, c, d, h, w = x.shape
-        
-        # Calculate required padding for each dimension
-        total_downscale = 1
-        for dsf in self.dsf:
-            total_downscale *= dsf
-        
-        target_d = ((d + total_downscale - 1) // total_downscale) * total_downscale
-        target_h = ((h + total_downscale - 1) // total_downscale) * total_downscale
-        target_w = ((w + total_downscale - 1) // total_downscale) * total_downscale
-        
-        # Further ensure compatibility with window size
-        target_d = ((target_d + window_size[0] - 1) // window_size[0]) * window_size[0]
-        target_h = ((target_h + window_size[1] - 1) // window_size[1]) * window_size[1]
-        target_w = ((target_w + window_size[2] - 1) // window_size[2]) * window_size[2]
-        
-        if target_d != d or target_h != h or target_w != w:
-            pad_d = target_d - d
-            pad_h = target_h - h
-            pad_w = target_w - w
-            
-            padding = (
-                0, pad_w,     # W dimension
-                0, pad_h,     # H dimension  
-                0, pad_d      # D dimension
-            )
-            x = F.pad(x, padding, mode='constant', value=0)
-            print(f"🔧 Input padded from {(d,h,w)} to {(target_d,target_h,target_w)}")
-            
-        return x
-    
     def init_weights(self):
         """Initialize model weights."""
         for m in self.modules():
@@ -437,8 +507,8 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
 
 
 # ✅ 修复后的模型创建函数
-def create_te_swinunet_s_3d(input_channels: int, num_classes: int, **kwargs):
-    """Create a small TE-Swin UNet3D model compatible with nnUNet."""
+def create_te_swinunet_s_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+    """Create a small TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 96,
         'layers': (2, 2, 4, 2),
@@ -450,15 +520,15 @@ def create_te_swinunet_s_3d(input_channels: int, num_classes: int, **kwargs):
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D(
+    return nnUNet_TE_SwinUnet3D_Fixed(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params
     )
 
 
-def create_te_swinunet_t_3d(input_channels: int, num_classes: int, **kwargs):
-    """Create a tiny TE-Swin UNet3D model compatible with nnUNet."""
+def create_te_swinunet_t_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+    """Create a tiny TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 48,
         'layers': (2, 2, 2, 2),  # 全部偶数
@@ -470,15 +540,15 @@ def create_te_swinunet_t_3d(input_channels: int, num_classes: int, **kwargs):
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D(
+    return nnUNet_TE_SwinUnet3D_Fixed(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params
     )
 
 
-def create_te_swinunet_b_3d(input_channels: int, num_classes: int, **kwargs):
-    """Create a base TE-Swin UNet3D model compatible with nnUNet."""
+def create_te_swinunet_b_3d_fixed(input_channels: int, num_classes: int, **kwargs):
+    """Create a base TE-Swin UNet3D model compatible with nnUNet (FIXED VERSION)."""
     default_params = {
         'hidden_dim': 128,
         'layers': (2, 2, 8, 2),  # 确保全部偶数
@@ -490,7 +560,7 @@ def create_te_swinunet_b_3d(input_channels: int, num_classes: int, **kwargs):
     
     default_params.update(kwargs)
     
-    return nnUNet_TE_SwinUnet3D(
+    return nnUNet_TE_SwinUnet3D_Fixed(
         input_channels=input_channels,
         num_classes=num_classes,
         **default_params
