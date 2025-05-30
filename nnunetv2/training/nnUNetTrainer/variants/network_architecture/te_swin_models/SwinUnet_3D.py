@@ -11,11 +11,16 @@ from einops import rearrange as einops_rearrange
 @dynamo.disable
 def rearrange(tensor, pattern, **axes_lengths):
     """Simple rearrange implementation for basic patterns"""
-    # 添加调试信息
-    if torch.distributed.get_rank() == 0 and hasattr(torch.distributed, 'is_initialized') and torch.distributed.is_initialized():
-        print(f"Rearrange pattern: {pattern}")
-        print(f"Input tensor shape: {tensor.shape}")
-        print(f"Parameters: {axes_lengths}")
+    # 添加调试信息 - 防止在非分布式环境中报错
+    try:
+        is_main_process = not torch.distributed.is_available() or not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+        if is_main_process:
+            print(f"Rearrange pattern: {pattern}")
+            print(f"Input tensor shape: {tensor.shape}")
+            print(f"Parameters: {axes_lengths}")
+    except:
+        # 当分布式环境未初始化时，安全地跳过
+        pass
         
     if pattern == 'b c h w d -> b h w d c':
         return tensor.permute(0, 2, 3, 4, 1)
