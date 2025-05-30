@@ -26,6 +26,14 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, 
                  device: torch.device = torch.device('cuda')):
         """Initialize TE-Swin UNet3D trainer."""
+        
+        # ✅ 立即禁用torch.compile，防止动态尺寸问题
+        import os
+        import torch._dynamo
+        os.environ['NNUNET_COMPILE'] = '0'
+        torch._dynamo.config.suppress_errors = True
+        print("🔧 Disabled torch.compile for TE-Swin UNet3D compatibility")
+        
         super().__init__(plans=plans, configuration=configuration, fold=fold, 
                         dataset_json=dataset_json, device=device)
         
@@ -80,12 +88,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         return network
     
     def initialize(self):
-        """重写初始化方法，禁用torch.compile以避免动态尺寸问题"""
-        # ✅ 禁用torch.compile以避免动态padding的兼容性问题
-        import os
-        os.environ['NNUNET_COMPILE'] = '0'
-        self.print_to_log_file("🔧 Disabled torch.compile for TE-Swin UNet3D compatibility")
-        
+        """重写初始化方法，确保正确的设备管理"""
         # 调用父类初始化
         super().initialize()
         
@@ -156,7 +159,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         super().on_train_start()
             
     def train_step(self, batch):
-        """修复的训练步骤 - 统一处理数据和目标的尺寸"""
+        """修复的训练步骤 - 强制统一尺寸处理"""
         # ✅ 正确处理数据 - 可能是列表或张量
         data = batch['data']
         target = batch['target']
@@ -175,66 +178,45 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             if hasattr(target, 'device') and target.device != self.device:
                 target = target.to(self.device, non_blocking=True)
         
-        # ✅ 关键修复：统一padding数据和目标
-        if hasattr(data, 'shape') and hasattr(target, 'shape'):
-            data_shape = data.shape[2:]  # D, H, W
-            target_shape = target.shape[1:]  # D, H, W (assuming target is [B, D, H, W])
+        # ✅ 强制检查并修复尺寸不匹配
+        if hasattr(data, 'shape') and hasattr(target, 'shape') and len(data.shape) >= 3 and len(target.shape) >= 2:
+            data_spatial = data.shape[2:]  # D, H, W
             
-            # 如果尺寸不匹配，需要对目标也进行padding
-            if data_shape != target_shape:
-                target = self._pad_target_to_match_data(target, data_shape)
+            # target可能是[B, D, H, W]或[B, C, D, H, W]格式
+            if len(target.shape) == 4:  # [B, D, H, W]
+                target_spatial = target.shape[1:]
+            elif len(target.shape) == 5:  # [B, C, D, H, W] 
+                target_spatial = target.shape[2:]
+            else:
+                target_spatial = None
                 
-                # 只在第一次时记录
-                if not hasattr(self, '_logged_padding'):
-                    self.print_to_log_file(f"🔧 Padded target from {target_shape} to {data_shape}")
-                    self._logged_padding = True
-        
-        # 只在第一个batch时打印尺寸信息，避免日志过多
-        if not hasattr(self, '_logged_shapes'):
+            if target_spatial is not None and data_spatial != target_spatial:
+                self.print_to_log_file(f"🔧 Detected size mismatch: data {data_spatial} vs target {target_spatial}")
+                
+                # 计算需要的padding
+                pad_d = max(0, data_spatial[0] - target_spatial[0])
+                pad_h = max(0, data_spatial[1] - target_spatial[1])
+                pad_w = max(0, data_spatial[2] - target_spatial[2])
+                
+                if pad_d > 0 or pad_h > 0 or pad_w > 0:
+                    # PyTorch padding格式: (W_left, W_right, H_top, H_bottom, D_front, D_back)
+                    padding = (0, pad_w, 0, pad_h, 0, pad_d)
+                    target = torch.nn.functional.pad(target, padding, mode='constant', value=0)
+                    self.print_to_log_file(f"🔧 Padded target to {target.shape}")
+                    
+        # 最终尺寸检查和日志
+        if not hasattr(self, '_logged_final_shapes'):
             if hasattr(data, 'shape'):
-                input_shape = data.shape[2:] if len(data.shape) > 2 else data.shape
-            else:
-                input_shape = "list_format"
-                
+                self.print_to_log_file(f"🔍 Final data shape: {data.shape}")
             if hasattr(target, 'shape'):
-                target_shape = target.shape[1:] if len(target.shape) > 1 else target.shape  
-            else:
-                target_shape = "list_format"
-                
-            self.print_to_log_file(f"🔍 Final - Input shape: {input_shape}, Target shape: {target_shape}")
-            self._logged_shapes = True
+                self.print_to_log_file(f"🔍 Final target shape: {target.shape}")
+            self._logged_final_shapes = True
                 
         batch['data'] = data
         batch['target'] = target
         
         # 调用父类的训练步骤
         return super().train_step(batch)
-    
-    def _pad_target_to_match_data(self, target, data_shape):
-        """
-        将目标标签padding到与数据相同的尺寸
-        
-        Args:
-            target: 目标张量 [B, D, H, W]
-            data_shape: 数据的空间尺寸 (D, H, W)
-            
-        Returns:
-            padding后的目标张量
-        """
-        current_shape = target.shape[1:]  # D, H, W
-        
-        # 计算每个维度需要的padding
-        pad_d = max(0, data_shape[0] - current_shape[0])
-        pad_h = max(0, data_shape[1] - current_shape[1]) 
-        pad_w = max(0, data_shape[2] - current_shape[2])
-        
-        if pad_d > 0 or pad_h > 0 or pad_w > 0:
-            # PyTorch的pad格式是 (left, right, top, bottom, front, back)
-            # 对于3D: (W_left, W_right, H_top, H_bottom, D_front, D_back)
-            padding = (0, pad_w, 0, pad_h, 0, pad_d)
-            target = torch.nn.functional.pad(target, padding, mode='constant', value=0)
-            
-        return target
 
     def validation_step(self, batch):
         """修复的验证步骤 - 正确处理数据格式"""
