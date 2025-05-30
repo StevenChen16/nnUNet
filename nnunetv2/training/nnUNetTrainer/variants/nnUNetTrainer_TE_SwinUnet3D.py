@@ -1,6 +1,5 @@
 """
-FIXED VERSION: nnUNet Trainer for TE-Swin UNet3D
-主要修复：使用修复版本的模型，解决输出尺寸不匹配问题
+nnUNet Trainer for TE-Swin UNet3D
 """
 import torch
 from typing import Union, Tuple, List
@@ -15,7 +14,7 @@ from nnunetv2.training.nnUNetTrainer.variants.network_architecture.te_swin_model
 
 class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     """
-    FIXED VERSION: nnUNet Trainer for TE-Swin UNet3D that resolves output size mismatch issues.
+    nnUNet Trainer for TE-Swin UNet3D that resolves output size mismatch issues.
     """
     
     def __init__(
@@ -28,12 +27,12 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         """
-        Initialize the fixed TE-Swin UNet3D trainer.
+        Initialize the TE-Swin UNet3D trainer.
         """
         # 调用父类初始化
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         
-        print("🎯 TE-Swin UNet3D FIXED Trainer initialized")
+        print("🎯 TE-Swin UNet3D Trainer initialized")
         print(f"   - Configuration: {configuration}")
         print(f"   - Fold: {fold}")
         print(f"   - Device: {device}")
@@ -46,9 +45,9 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """
-        Build the FIXED TE-Swin UNet3D network architecture.
+        Build the TE-Swin UNet3D network architecture.
         """
-        print("🔧 Building FIXED TE-Swin UNet3D architecture...")
+        print("🔧 Building TE-Swin UNet3D architecture...")
         
         # 根据内存情况选择模型大小
         if hasattr(self, 'configuration_manager'):
@@ -77,7 +76,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
                 input_channels=num_input_channels,
                 num_classes=num_output_channels,
                 deep_supervision=enable_deep_supervision,
-                # 针对小patch size优化的参数
+                # 针对小patch size的参数
                 hidden_dim=32,
                 layers=(2, 2, 2, 2),
                 heads=(2, 4, 6, 8),
@@ -111,7 +110,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
                 downscaling_factors=(2, 2, 2, 2)
             )
         
-        print(f"✅ FIXED TE-Swin UNet3D model created successfully")
+        print(f"✅ TE-Swin UNet3D model created successfully")
         print(f"   - Total parameters: {sum(p.numel() for p in model.parameters()):,}")
         print(f"   - Model type: {type(model).__name__}")
         
@@ -119,7 +118,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     
     def configure_optimizers(self):
         """
-        Configure optimizers with settings optimized for TE-Swin UNet3D.
+        Configure optimizers with settings for TE-Swin UNet3D.
         """
         print("🔧 Configuring optimizers for TE-Swin UNet3D...")
         
@@ -149,13 +148,10 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     
     def train_step(self, batch: dict) -> dict:
         """
-        Execute a single training step with additional debugging for the fixed model.
+        Execute a single training step.
         """
         data = batch['data']
         target = batch['target']
-        
-        # ✅ 添加调试信息
-        print(f"🔍 Train step shapes - Data: {data.shape}, Target: {target.shape}")
         
         data = data.to(self.device, non_blocking=True)
         if isinstance(target, list):
@@ -166,36 +162,10 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         self.optimizer.zero_grad(set_to_none=True)
         
         # Forward pass
-        try:
-            output = self.network(data)
-            print(f"🔍 Forward pass output shapes:")
-            if isinstance(output, list):
-                for i, out in enumerate(output):
-                    print(f"   - Output {i}: {out.shape}")
-            else:
-                print(f"   - Single output: {output.shape}")
-                
-        except Exception as e:
-            print(f"❌ Forward pass failed: {e}")
-            raise e
+        output = self.network(data)
         
         # Loss computation
-        try:
-            l = self.loss(output, target)
-            print(f"🔍 Loss computed successfully: {l.item():.4f}")
-        except Exception as e:
-            print(f"❌ Loss computation failed: {e}")
-            print(f"   Output type: {type(output)}")
-            print(f"   Target type: {type(target)}")
-            if isinstance(output, list):
-                print(f"   Output shapes: {[o.shape for o in output]}")
-            else:
-                print(f"   Output shape: {output.shape}")
-            if isinstance(target, list):
-                print(f"   Target shapes: {[t.shape for t in target]}")
-            else:
-                print(f"   Target shape: {target.shape}")
-            raise e
+        l = self.loss(output, target)
         
         # Backward pass
         if self.grad_scaler is not None:
@@ -213,12 +183,10 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
     
     def validation_step(self, batch: dict) -> dict:
         """
-        Execute a single validation step with additional debugging.
+        Execute a single validation step.
         """
         data = batch['data']
         target = batch['target']
-        
-        print(f"🔍 Validation step shapes - Data: {data.shape}, Target: {target.shape}")
         
         data = data.to(self.device, non_blocking=True)
         if isinstance(target, list):
@@ -229,33 +197,17 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         # Forward pass
         self.network.eval()
         with torch.no_grad():
-            try:
-                output = self.network(data)
-                print(f"🔍 Validation forward pass successful")
-                if isinstance(output, list):
-                    for i, out in enumerate(output):
-                        print(f"   - Output {i}: {out.shape}")
-                else:
-                    print(f"   - Single output: {output.shape}")
-                    
-            except Exception as e:
-                print(f"❌ Validation forward pass failed: {e}")
-                raise e
+            output = self.network(data)
         
         # Loss computation
-        try:
-            l = self.loss(output, target)
-            print(f"🔍 Validation loss computed: {l.item():.4f}")
-        except Exception as e:
-            print(f"❌ Validation loss computation failed: {e}")
-            raise e
+        l = self.loss(output, target)
         
         return {'loss': l.detach().cpu().numpy()}
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Tiny(nnUNetTrainer_TE_SwinUnet3D):
+class nnUNetTrainer_TE_SwinUnet3D_tiny(nnUNetTrainer_TE_SwinUnet3D):
     """
-    FIXED VERSION: Tiny variant optimized for limited GPU memory.
+    Tiny variant for limited GPU memory.
     """
     
     def build_network_architecture(self, architecture_class_name: str,
@@ -265,9 +217,9 @@ class nnUNetTrainer_TE_SwinUnet3D_Tiny(nnUNetTrainer_TE_SwinUnet3D):
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """
-        Build the tiny FIXED TE-Swin UNet3D for memory-constrained environments.
+        Build the tiny TE-Swin UNet3D for memory-constrained environments.
         """
-        print("🔧 Building TINY FIXED TE-Swin UNet3D for limited memory...")
+        print("🔧 Building TINY TE-Swin UNet3D for limited memory...")
         
         model = create_te_swinunet_t_3d(
             input_channels=num_input_channels,
@@ -281,13 +233,13 @@ class nnUNetTrainer_TE_SwinUnet3D_Tiny(nnUNetTrainer_TE_SwinUnet3D):
             downscaling_factors=(2, 2, 2, 2)
         )
         
-        print(f"✅ TINY FIXED TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
+        print(f"✅ TINY TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
         return model
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Small(nnUNetTrainer_TE_SwinUnet3D):
+class nnUNetTrainer_TE_SwinUnet3D_small(nnUNetTrainer_TE_SwinUnet3D):
     """
-    FIXED VERSION: Small variant for balanced performance and memory usage.
+    Small variant for balanced performance and memory usage.
     """
     
     def build_network_architecture(self, architecture_class_name: str,
@@ -297,9 +249,9 @@ class nnUNetTrainer_TE_SwinUnet3D_Small(nnUNetTrainer_TE_SwinUnet3D):
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """
-        Build the small FIXED TE-Swin UNet3D for balanced performance.
+        Build the small TE-Swin UNet3D for balanced performance.
         """
-        print("🔧 Building SMALL FIXED TE-Swin UNet3D for balanced performance...")
+        print("🔧 Building SMALL TE-Swin UNet3D for balanced performance...")
         
         model = create_te_swinunet_s_3d(
             input_channels=num_input_channels,
@@ -313,13 +265,13 @@ class nnUNetTrainer_TE_SwinUnet3D_Small(nnUNetTrainer_TE_SwinUnet3D):
             downscaling_factors=(2, 2, 2, 2)
         )
         
-        print(f"✅ SMALL FIXED TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
+        print(f"✅ SMALL TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
         return model
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Base(nnUNetTrainer_TE_SwinUnet3D):
+class nnUNetTrainer_TE_SwinUnet3D_base(nnUNetTrainer_TE_SwinUnet3D):
     """
-    FIXED VERSION: Base variant for high-performance training.
+    Base variant for high-performance training.
     """
     
     def build_network_architecture(self, architecture_class_name: str,
@@ -329,9 +281,9 @@ class nnUNetTrainer_TE_SwinUnet3D_Base(nnUNetTrainer_TE_SwinUnet3D):
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> torch.nn.Module:
         """
-        Build the base FIXED TE-Swin UNet3D for high performance.
+        Build the base TE-Swin UNet3D for high performance.
         """
-        print("🔧 Building BASE FIXED TE-Swin UNet3D for high performance...")
+        print("🔧 Building BASE TE-Swin UNet3D for high performance...")
         
         model = create_te_swinunet_b_3d(
             input_channels=num_input_channels,
@@ -345,5 +297,5 @@ class nnUNetTrainer_TE_SwinUnet3D_Base(nnUNetTrainer_TE_SwinUnet3D):
             downscaling_factors=(2, 2, 2, 2)
         )
         
-        print(f"✅ BASE FIXED TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
+        print(f"✅ BASE TE-Swin UNet3D created (Parameters: {sum(p.numel() for p in model.parameters()):,})")
         return model
