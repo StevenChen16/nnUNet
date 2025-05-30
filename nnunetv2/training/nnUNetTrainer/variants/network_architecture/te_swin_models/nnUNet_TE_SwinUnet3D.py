@@ -266,9 +266,14 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         original_shape = x.shape[2:]  # D, H, W
         b, c = x.shape[:2]
         
+        print(f"🔍 DEBUG: Input shape: {x.shape}, Original spatial shape: {original_shape}")
+        
         # 检查并padding输入以满足架构需求
         padded_x, padding_info = self._ensure_compatible_size(x)
         x = padded_x
+        
+        if padding_info['applied']:
+            print(f"🔍 DEBUG: Applied padding, new shape: {x.shape}")
         
         # Store features for deep supervision
         deep_supervision_outputs = []
@@ -309,12 +314,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         # Apply slice propagation - similar to video forward/backward propagation
         x = self.slice_propagation(x)
         
-        # Deep supervision from bottleneck
-        if self._deep_supervision and self.training:
-            ds_out = self.deep_supervision_heads[0](x)
-            # 确保深度监督输出尺寸正确
-            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
-            deep_supervision_outputs.append(ds_out)
+        print(f"🔍 DEBUG: After encoder, bottleneck shape: {x.shape}")
         
         # Create multi-scale texture pyramid
         texture_pyramid = self.texture_pyramid(texture_features)
@@ -328,11 +328,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         fused_feat = self.fusion_modules[2](shape_feat, texture_feat)
         x = self.converge4(x, fused_feat)
         
-        if self._deep_supervision and self.training:
-            ds_out = self.deep_supervision_heads[1](x)
-            # 确保深度监督输出尺寸正确
-            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
-            deep_supervision_outputs.append(ds_out)
+        print(f"🔍 DEBUG: After dec4, shape: {x.shape}")
         
         # Stage 3 decoder
         x = self.dec3(x)
@@ -341,11 +337,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         fused_feat = self.fusion_modules[1](shape_feat, texture_feat)
         x = self.converge3(x, fused_feat)
         
-        if self._deep_supervision and self.training:
-            ds_out = self.deep_supervision_heads[2](x)
-            # 确保深度监督输出尺寸正确
-            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
-            deep_supervision_outputs.append(ds_out)
+        print(f"🔍 DEBUG: After dec3, shape: {x.shape}")
         
         # Stage 1-2 decoder
         x = self.dec12(x)
@@ -354,43 +346,60 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         fused_feat = self.fusion_modules[0](shape_feat, texture_feat)
         x = self.converge12(x, fused_feat)
         
-        if self._deep_supervision and self.training:
-            ds_out = self.deep_supervision_heads[3](x)
-            # 确保深度监督输出尺寸正确
-            ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
-            deep_supervision_outputs.append(ds_out)
+        print(f"🔍 DEBUG: After dec12, shape: {x.shape}")
         
         # Final upsampling and output head
         x = self.final(x)
+        print(f"🔍 DEBUG: After final upsampling, shape: {x.shape}")
+        
         main_output = self.seg_head(x)
+        print(f"🔍 DEBUG: Main output shape before processing: {main_output.shape}")
+        
+        # 处理深度监督输出（如果启用）
+        if self._deep_supervision and self.training:
+            print("🔍 DEBUG: Processing deep supervision outputs...")
+            
+            # 从所有decoder阶段收集深度监督输出
+            ds_features = [
+                encoder_features[3],  # bottleneck 
+                encoder_features[2],  # stage4
+                encoder_features[1],  # stage3  
+                encoder_features[0]   # stage1-2
+            ]
+            
+            for i, feat in enumerate(ds_features):
+                ds_out = self.deep_supervision_heads[i](feat)
+                print(f"🔍 DEBUG: DS output {i} before interpolation: {ds_out.shape}")
+                
+                # 直接插值到原始输入尺寸
+                ds_out_resized = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
+                print(f"🔍 DEBUG: DS output {i} after interpolation: {ds_out_resized.shape}")
+                
+                deep_supervision_outputs.append(ds_out_resized)
         
         # 核心修复：确保输出匹配原始输入尺寸
         if padding_info['applied']:
             main_output = self._crop_to_original(main_output, original_shape)
-            if self._deep_supervision and self.training and deep_supervision_outputs:
-                deep_supervision_outputs = [
-                    self._crop_to_original(ds_out, original_shape) 
-                    for ds_out in deep_supervision_outputs
-                ]
+            print(f"🔍 DEBUG: Main output after cropping: {main_output.shape}")
         
         # 最终尺寸检查和调整
         expected_shape = (b, self.num_classes) + original_shape
         if main_output.shape != expected_shape:
+            print(f"🔍 DEBUG: Main output shape mismatch, interpolating...")
             main_output = F.interpolate(main_output, size=original_shape, mode='trilinear', align_corners=False)
+            print(f"🔍 DEBUG: Main output after final interpolation: {main_output.shape}")
         
         # Return outputs based on training mode
         if self._deep_supervision and self.training:
-            # 检查深度监督输出尺寸
-            for i in range(len(deep_supervision_outputs)):
-                if deep_supervision_outputs[i].shape != expected_shape:
-                    deep_supervision_outputs[i] = F.interpolate(
-                        deep_supervision_outputs[i], size=original_shape, mode='trilinear', align_corners=False
-                    )
+            print(f"🔍 DEBUG: Returning {len(deep_supervision_outputs) + 1} outputs for deep supervision")
+            for i, ds_out in enumerate(deep_supervision_outputs):
+                print(f"🔍 DEBUG: Final DS output {i} shape: {ds_out.shape}")
             
             # Return list of outputs for deep supervision
             all_outputs = [main_output] + deep_supervision_outputs
             return all_outputs
         else:
+            print(f"🔍 DEBUG: Returning single output: {main_output.shape}")
             return main_output
     
     def _ensure_compatible_size(self, x):
