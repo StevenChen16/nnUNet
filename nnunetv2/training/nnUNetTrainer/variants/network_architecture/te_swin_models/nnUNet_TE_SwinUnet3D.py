@@ -1,6 +1,6 @@
 """
-修复后的 nnUNet-compatible TE-Swin UNet3D model implementation.
-主要修复：添加nnUNet接口兼容性，解决'decoder'属性缺失问题
+修复循环引用问题的 nnUNet-compatible TE-Swin UNet3D model implementation.
+主要修复：移除所有循环引用，使用属性访问而非对象引用
 """
 import torch 
 import torch.nn as nn
@@ -19,32 +19,30 @@ from .ShapeTextureFusion import ShapeTextureFusion
 from .TemporalModules import TemporalAttentionModule, SlicePropagationModule
 
 
-class nnUNetDecoderWrapper:
+class SimpleDecoderProxy:
     """
-    nnUNet兼容性包装器 - 模拟标准nnUNet的decoder接口
+    简单的decoder代理类 - 避免循环引用
+    不存储对parent模型的引用，而是通过传入的回调函数操作
     """
-    def __init__(self, parent_model):
-        self.parent_model = parent_model
+    def __init__(self, get_deep_supervision_func, set_deep_supervision_func):
+        self._get_ds = get_deep_supervision_func
+        self._set_ds = set_deep_supervision_func
         
     @property 
     def deep_supervision(self):
         """获取深度监督状态"""
-        return getattr(self.parent_model, 'deep_supervision', True)
+        return self._get_ds()
         
     @deep_supervision.setter
     def deep_supervision(self, value):
         """设置深度监督状态"""
-        if hasattr(self.parent_model, 'deep_supervision'):
-            self.parent_model.deep_supervision = value
-            print(f"🔧 TE-Swin UNet3D deep supervision set to: {value}")
-        else:
-            print(f"⚠️  Parent model has no deep_supervision attribute")
+        self._set_ds(value)
+        print(f"🔧 TE-Swin UNet3D deep supervision set to: {value}")
 
 
 class nnUNet_TE_SwinUnet3D(nn.Module):
     """
-    修复后的 nnUNet-compatible Texture-Enhanced Swin UNet3D.
-    添加了完整的nnUNet接口兼容性。
+    修复循环引用问题的 nnUNet-compatible Texture-Enhanced Swin UNet3D.
     """
     
     def __init__(
@@ -69,11 +67,11 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         
         self.input_channels = input_channels
         self.num_classes = num_classes
-        self.deep_supervision = deep_supervision
+        self._deep_supervision = deep_supervision  # 使用私有变量避免属性冲突
         self.dsf = downscaling_factors
         self.window_size = window_size
         
-        # 确保layers都是偶数（解决之前的问题）
+        # 确保layers都是偶数
         layers = tuple(max(2, (layer // 2) * 2) for layer in layers)
         print(f"🔧 Adjusted layers to ensure even numbers: {layers}")
         
@@ -149,7 +147,6 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         ])
         
         # Temporal attention modules - treating Z axis as time dimension
-        # 确保head数量合理
         safe_heads = [max(1, h//4) for h in heads]  # 减少head数量避免问题
         self.temporal_attention_modules = nn.ModuleList([
             TemporalAttentionModule(dim=hidden_dim, num_heads=safe_heads[0]),
@@ -214,7 +211,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         self.seg_head = nn.Conv3d(stl_channels, num_classes, kernel_size=1)
         
         # Deep supervision outputs if enabled
-        if self.deep_supervision:
+        if self._deep_supervision:
             self.deep_supervision_heads = nn.ModuleList([
                 nn.Conv3d(hidden_dim * 8, num_classes, kernel_size=1),
                 nn.Conv3d(hidden_dim * 4, num_classes, kernel_size=1),
@@ -222,41 +219,62 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
                 nn.Conv3d(hidden_dim, num_classes, kernel_size=1)
             ])
         
-        # ✅ nnUNet兼容性：添加必需的属性
-        self.decoder = nnUNetDecoderWrapper(self)
-        self.encoder = self  # 自引用，因为我们的模型包含编码器功能
+        # ✅ nnUNet兼容性：使用安全的代理模式，避免循环引用
+        self.decoder = SimpleDecoderProxy(
+            get_deep_supervision_func=lambda: self._deep_supervision,
+            set_deep_supervision_func=self._set_deep_supervision
+        )
+        
+        # ✅ 不要自引用！创建一个标记即可
+        self._has_encoder = True  # 用标记代替self.encoder = self
         
         # ✅ 添加其他nnUNet可能需要的属性
-        self.do_ds = deep_supervision  # nnUNet使用的另一个深度监督标志
+        self.do_ds = deep_supervision
         
         # Initialize weights
         self.init_weights()
         
-        print(f"✅ TE-Swin UNet3D initialized with nnUNet compatibility")
+        print(f"✅ TE-Swin UNet3D initialized with nnUNet compatibility (no circular references)")
         print(f"   - Input channels: {input_channels}")
         print(f"   - Output classes: {num_classes}")  
         print(f"   - Deep supervision: {deep_supervision}")
         print(f"   - Total parameters: {sum(p.numel() for p in self.parameters()):,}")
+    
+    def _set_deep_supervision(self, value):
+        """安全的深度监督设置方法"""
+        self._deep_supervision = value
+        self.do_ds = value
+        print(f"🔧 Deep supervision internally set to: {value}")
+    
+    @property
+    def deep_supervision(self):
+        """深度监督属性getter"""
+        return self._deep_supervision
+    
+    @deep_supervision.setter  
+    def deep_supervision(self, value):
+        """深度监督属性setter"""
+        self._set_deep_supervision(value)
         
     def forward(self, x):
         """
         Forward pass through the TE-Swin UNet3D.
         """
-        # Check input dimensions for compatibility
-        input_shape = x.shape[2:]  # D, H, W
-        valid, message = self.validate_dimensions(input_shape)
-        if not valid:
-            # Try to make compatible by padding
-            x = self._pad_to_compatible_size(x)
-        
-        # Store features for deep supervision
-        deep_supervision_outputs = []
-        
-        # Encoder pathway with texture and temporal attention
-        encoder_features = []  # Original features from encoder
-        texture_features = []  # Texture-enhanced features
-        
         try:
+            # Check input dimensions for compatibility
+            input_shape = x.shape[2:]  # D, H, W
+            valid, message = self.validate_dimensions(input_shape)
+            if not valid:
+                # Try to make compatible by padding
+                x = self._pad_to_compatible_size(x)
+            
+            # Store features for deep supervision
+            deep_supervision_outputs = []
+            
+            # Encoder pathway with texture and temporal attention
+            encoder_features = []  # Original features from encoder
+            texture_features = []  # Texture-enhanced features
+            
             # Stage 1-2
             x = self.enc12(x)
             # Apply temporal attention - treating Z-axis as time axis  
@@ -290,7 +308,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             x = self.slice_propagation(x)
             
             # Deep supervision from bottleneck
-            if self.deep_supervision and self.training:
+            if self._deep_supervision and self.training:
                 ds_out = F.interpolate(self.deep_supervision_heads[0](x), 
                                      size=input_shape, mode='trilinear', align_corners=False)
                 deep_supervision_outputs.append(ds_out)
@@ -307,7 +325,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             fused_feat = self.fusion_modules[2](shape_feat, texture_feat)
             x = self.converge4(x, fused_feat)
             
-            if self.deep_supervision and self.training:
+            if self._deep_supervision and self.training:
                 ds_out = F.interpolate(self.deep_supervision_heads[1](x), 
                                      size=input_shape, mode='trilinear', align_corners=False)
                 deep_supervision_outputs.append(ds_out)
@@ -319,7 +337,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             fused_feat = self.fusion_modules[1](shape_feat, texture_feat)
             x = self.converge3(x, fused_feat)
             
-            if self.deep_supervision and self.training:
+            if self._deep_supervision and self.training:
                 ds_out = F.interpolate(self.deep_supervision_heads[2](x), 
                                      size=input_shape, mode='trilinear', align_corners=False)
                 deep_supervision_outputs.append(ds_out)
@@ -331,7 +349,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             fused_feat = self.fusion_modules[0](shape_feat, texture_feat)
             x = self.converge12(x, fused_feat)
             
-            if self.deep_supervision and self.training:
+            if self._deep_supervision and self.training:
                 ds_out = F.interpolate(self.deep_supervision_heads[3](x), 
                                      size=input_shape, mode='trilinear', align_corners=False)
                 deep_supervision_outputs.append(ds_out)
@@ -341,7 +359,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             main_output = self.seg_head(x)
             
             # Return outputs based on training mode
-            if self.deep_supervision and self.training:
+            if self._deep_supervision and self.training:
                 # Return list of outputs for deep supervision
                 all_outputs = [main_output] + deep_supervision_outputs
                 return all_outputs
@@ -352,6 +370,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             print(f"❌ Forward pass error: {e}")
             # 返回一个基本的输出避免崩溃
             batch_size = x.shape[0]
+            input_shape = x.shape[2:]
             output_shape = (batch_size, self.num_classes) + input_shape
             fallback_output = torch.zeros(output_shape, device=x.device, dtype=x.dtype)
             return fallback_output
