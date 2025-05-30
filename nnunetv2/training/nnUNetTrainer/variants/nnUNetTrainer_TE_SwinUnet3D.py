@@ -73,7 +73,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         
         if memory_requirement < 500000:  # 小内存需求
             print("🔧 Using TINY variant (low memory)")
-            model = create_te_swinunet_t_3d_fixed(
+            model = create_te_swinunet_t_3d(
                 input_channels=num_input_channels,
                 num_classes=num_output_channels,
                 deep_supervision=enable_deep_supervision,
@@ -86,7 +86,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             )
         elif memory_requirement < 2000000:  # 中等内存需求
             print("🔧 Using SMALL variant (balanced)")
-            model = create_te_swinunet_s_3d_fixed(
+            model = create_te_swinunet_s_3d(
                 input_channels=num_input_channels,
                 num_classes=num_output_channels,
                 deep_supervision=enable_deep_supervision,
@@ -99,7 +99,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
             )
         else:  # 大内存需求
             print("🔧 Using BASE variant (high performance)")
-            model = create_te_swinunet_b_3d_fixed(
+            model = create_te_swinunet_b_3d(
                 input_channels=num_input_channels,
                 num_classes=num_output_channels,
                 deep_supervision=enable_deep_supervision,
@@ -253,7 +253,7 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         return {'loss': l.detach().cpu().numpy()}
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Tiny_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
+class nnUNetTrainer_TE_SwinUnet3D_Tiny(nnUNetTrainer_TE_SwinUnet3D):
     """
     FIXED VERSION: Tiny variant optimized for limited GPU memory.
     """
@@ -269,7 +269,7 @@ class nnUNetTrainer_TE_SwinUnet3D_Tiny_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
         """
         print("🔧 Building TINY FIXED TE-Swin UNet3D for limited memory...")
         
-        model = create_te_swinunet_t_3d_fixed(
+        model = create_te_swinunet_t_3d(
             input_channels=num_input_channels,
             num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
@@ -285,7 +285,7 @@ class nnUNetTrainer_TE_SwinUnet3D_Tiny_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
         return model
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Small_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
+class nnUNetTrainer_TE_SwinUnet3D_Small(nnUNetTrainer_TE_SwinUnet3D):
     """
     FIXED VERSION: Small variant for balanced performance and memory usage.
     """
@@ -301,7 +301,7 @@ class nnUNetTrainer_TE_SwinUnet3D_Small_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed)
         """
         print("🔧 Building SMALL FIXED TE-Swin UNet3D for balanced performance...")
         
-        model = create_te_swinunet_s_3d_fixed(
+        model = create_te_swinunet_s_3d(
             input_channels=num_input_channels,
             num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
@@ -317,7 +317,7 @@ class nnUNetTrainer_TE_SwinUnet3D_Small_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed)
         return model
 
 
-class nnUNetTrainer_TE_SwinUnet3D_Base_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
+class nnUNetTrainer_TE_SwinUnet3D_Base(nnUNetTrainer_TE_SwinUnet3D):
     """
     FIXED VERSION: Base variant for high-performance training.
     """
@@ -333,7 +333,7 @@ class nnUNetTrainer_TE_SwinUnet3D_Base_Fixed(nnUNetTrainer_TE_SwinUnet3D_Fixed):
         """
         print("🔧 Building BASE FIXED TE-Swin UNet3D for high performance...")
         
-        model = create_te_swinunet_b_3d_fixed(
+        model = create_te_swinunet_b_3d(
             input_channels=num_input_channels,
             num_classes=num_output_channels,
             deep_supervision=enable_deep_supervision,
