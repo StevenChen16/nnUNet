@@ -217,7 +217,7 @@ class nnUNetTrainer(object):
             # compile network for free speedup
             if self._do_i_compile():
                 self.print_to_log_file('Using torch.compile...')
-                # self.network = torch.compile(self.network)
+                self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
             # if ddp, wrap in DDP wrapper
@@ -230,8 +230,8 @@ class nnUNetTrainer(object):
             self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
 
             # torch 2.2.2 crashes upon compiling CE loss
-            # if self._do_i_compile():
-            #     self.loss = torch.compile(self.loss)
+            if self._do_i_compile():
+                self.loss = torch.compile(self.loss)
             self.was_initialized = True
         else:
             raise RuntimeError("You have called self.initialize even though the trainer was already initialized. "

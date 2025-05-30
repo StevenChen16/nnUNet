@@ -110,7 +110,7 @@ class CustomPredictor(nnUNetPredictor):
         if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
                 and not isinstance(self.network, OptimizedModule):
             print('Using torch.compile')
-            # self.network = torch.compile(self.network)
+            self.network = torch.compile(self.network)
 
     @torch.inference_mode(mode=True)
     def predict_preprocessed_image(self, image):
