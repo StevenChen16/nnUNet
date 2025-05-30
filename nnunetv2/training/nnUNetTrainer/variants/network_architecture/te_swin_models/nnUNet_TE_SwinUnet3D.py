@@ -259,121 +259,112 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
     def forward(self, x):
         """
         Forward pass through the TE-Swin UNet3D.
+        简化版本，移除动态裁剪逻辑以兼容torch.compile
         """
-        try:
-            # Check input dimensions for compatibility
-            input_shape = x.shape[2:]  # D, H, W
-            valid, message = self.validate_dimensions(input_shape)
-            if not valid:
-                # Try to make compatible by padding
-                x = self._pad_to_compatible_size(x)
-            
-            # Store features for deep supervision
-            deep_supervision_outputs = []
-            
-            # Encoder pathway with texture and temporal attention
-            encoder_features = []  # Original features from encoder
-            texture_features = []  # Texture-enhanced features
-            
-            # Stage 1-2
-            x = self.enc12(x)
-            # Apply temporal attention - treating Z-axis as time axis  
-            x = self.temporal_attention_modules[0](x)
-            texture_feat = self.texture_attention_modules[0](x)
-            encoder_features.append(x)
-            texture_features.append(texture_feat)
-            
-            # Stage 3
-            x = self.enc3(x)
-            x = self.temporal_attention_modules[1](x)
-            texture_feat = self.texture_attention_modules[1](x)
-            encoder_features.append(x)
-            texture_features.append(texture_feat)
-            
-            # Stage 4
-            x = self.enc4(x)
-            x = self.temporal_attention_modules[2](x)
-            texture_feat = self.texture_attention_modules[2](x)
-            encoder_features.append(x)
-            texture_features.append(texture_feat)
-            
-            # Stage 5 (bottleneck)
-            x = self.enc5(x)
-            x = self.temporal_attention_modules[3](x)
-            texture_feat = self.texture_attention_modules[3](x)
-            encoder_features.append(x)
-            texture_features.append(texture_feat)
-            
-            # Apply slice propagation - similar to video forward/backward propagation
-            x = self.slice_propagation(x)
-            
-            # Deep supervision from bottleneck
-            if self._deep_supervision and self.training:
-                ds_out = F.interpolate(self.deep_supervision_heads[0](x), 
-                                     size=input_shape, mode='trilinear', align_corners=False)
-                deep_supervision_outputs.append(ds_out)
-            
-            # Create multi-scale texture pyramid
-            texture_pyramid = self.texture_pyramid(texture_features)
-            
-            # Decoder pathway with shape-texture fusion
-            
-            # Stage 4 decoder
-            x = self.dec4(x)
-            shape_feat = encoder_features[2]  # Stage 4 features
-            texture_feat = texture_pyramid[2]
-            fused_feat = self.fusion_modules[2](shape_feat, texture_feat)
-            x = self.converge4(x, fused_feat)
-            
-            if self._deep_supervision and self.training:
-                ds_out = F.interpolate(self.deep_supervision_heads[1](x), 
-                                     size=input_shape, mode='trilinear', align_corners=False)
-                deep_supervision_outputs.append(ds_out)
-            
-            # Stage 3 decoder
-            x = self.dec3(x)
-            shape_feat = encoder_features[1]  # Stage 3 features
-            texture_feat = texture_pyramid[1]
-            fused_feat = self.fusion_modules[1](shape_feat, texture_feat)
-            x = self.converge3(x, fused_feat)
-            
-            if self._deep_supervision and self.training:
-                ds_out = F.interpolate(self.deep_supervision_heads[2](x), 
-                                     size=input_shape, mode='trilinear', align_corners=False)
-                deep_supervision_outputs.append(ds_out)
-            
-            # Stage 1-2 decoder
-            x = self.dec12(x)
-            shape_feat = encoder_features[0]  # Stage 1-2 features
-            texture_feat = texture_pyramid[0]
-            fused_feat = self.fusion_modules[0](shape_feat, texture_feat)
-            x = self.converge12(x, fused_feat)
-            
-            if self._deep_supervision and self.training:
-                ds_out = F.interpolate(self.deep_supervision_heads[3](x), 
-                                     size=input_shape, mode='trilinear', align_corners=False)
-                deep_supervision_outputs.append(ds_out)
-            
-            # Final upsampling and output head
-            x = self.final(x)
-            main_output = self.seg_head(x)
-            
-            # Return outputs based on training mode
-            if self._deep_supervision and self.training:
-                # Return list of outputs for deep supervision
-                all_outputs = [main_output] + deep_supervision_outputs
-                return all_outputs
-            else:
-                return main_output
-                
-        except Exception as e:
-            print(f"❌ Forward pass error: {e}")
-            # 返回一个基本的输出避免崩溃
-            batch_size = x.shape[0]
-            input_shape = x.shape[2:]
-            output_shape = (batch_size, self.num_classes) + input_shape
-            fallback_output = torch.zeros(output_shape, device=x.device, dtype=x.dtype)
-            return fallback_output
+        # Check input dimensions for compatibility
+        input_shape = x.shape[2:]  # D, H, W
+        valid, message = self.validate_dimensions(input_shape)
+        if not valid:
+            # Try to make compatible by padding
+            x = self._pad_to_compatible_size(x)
+        
+        # Store features for deep supervision
+        deep_supervision_outputs = []
+        
+        # Encoder pathway with texture and temporal attention
+        encoder_features = []  # Original features from encoder
+        texture_features = []  # Texture-enhanced features
+        
+        # Stage 1-2
+        x = self.enc12(x)
+        # Apply temporal attention - treating Z-axis as time axis  
+        x = self.temporal_attention_modules[0](x)
+        texture_feat = self.texture_attention_modules[0](x)
+        encoder_features.append(x)
+        texture_features.append(texture_feat)
+        
+        # Stage 3
+        x = self.enc3(x)
+        x = self.temporal_attention_modules[1](x)
+        texture_feat = self.texture_attention_modules[1](x)
+        encoder_features.append(x)
+        texture_features.append(texture_feat)
+        
+        # Stage 4
+        x = self.enc4(x)
+        x = self.temporal_attention_modules[2](x)
+        texture_feat = self.texture_attention_modules[2](x)
+        encoder_features.append(x)
+        texture_features.append(texture_feat)
+        
+        # Stage 5 (bottleneck)
+        x = self.enc5(x)
+        x = self.temporal_attention_modules[3](x)
+        texture_feat = self.texture_attention_modules[3](x)
+        encoder_features.append(x)
+        texture_features.append(texture_feat)
+        
+        # Apply slice propagation - similar to video forward/backward propagation
+        x = self.slice_propagation(x)
+        
+        # Deep supervision from bottleneck
+        if self._deep_supervision and self.training:
+            ds_out = F.interpolate(self.deep_supervision_heads[0](x), 
+                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            deep_supervision_outputs.append(ds_out)
+        
+        # Create multi-scale texture pyramid
+        texture_pyramid = self.texture_pyramid(texture_features)
+        
+        # Decoder pathway with shape-texture fusion
+        
+        # Stage 4 decoder
+        x = self.dec4(x)
+        shape_feat = encoder_features[2]  # Stage 4 features
+        texture_feat = texture_pyramid[2]
+        fused_feat = self.fusion_modules[2](shape_feat, texture_feat)
+        x = self.converge4(x, fused_feat)
+        
+        if self._deep_supervision and self.training:
+            ds_out = F.interpolate(self.deep_supervision_heads[1](x), 
+                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            deep_supervision_outputs.append(ds_out)
+        
+        # Stage 3 decoder
+        x = self.dec3(x)
+        shape_feat = encoder_features[1]  # Stage 3 features
+        texture_feat = texture_pyramid[1]
+        fused_feat = self.fusion_modules[1](shape_feat, texture_feat)
+        x = self.converge3(x, fused_feat)
+        
+        if self._deep_supervision and self.training:
+            ds_out = F.interpolate(self.deep_supervision_heads[2](x), 
+                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            deep_supervision_outputs.append(ds_out)
+        
+        # Stage 1-2 decoder
+        x = self.dec12(x)
+        shape_feat = encoder_features[0]  # Stage 1-2 features
+        texture_feat = texture_pyramid[0]
+        fused_feat = self.fusion_modules[0](shape_feat, texture_feat)
+        x = self.converge12(x, fused_feat)
+        
+        if self._deep_supervision and self.training:
+            ds_out = F.interpolate(self.deep_supervision_heads[3](x), 
+                                 size=x.shape[2:], mode='trilinear', align_corners=False)
+            deep_supervision_outputs.append(ds_out)
+        
+        # Final upsampling and output head
+        x = self.final(x)
+        main_output = self.seg_head(x)
+        
+        # Return outputs based on training mode
+        if self._deep_supervision and self.training:
+            # Return list of outputs for deep supervision
+            all_outputs = [main_output] + deep_supervision_outputs
+            return all_outputs
+        else:
+            return main_output
     
     def validate_dimensions(self, input_shape):
         """Validate that dimensions are compatible with the model architecture."""
