@@ -5,6 +5,7 @@ This integrates our "MRI as GIF" approach into the nnUNet framework.
 import torch
 import torch.nn as nn
 from typing import Tuple, Union, List
+from tqdm import tqdm
 from dynamic_network_architectures.building_blocks.helper import get_matching_instancenorm, convert_dim_to_conv_op
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
@@ -43,41 +44,111 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         # Model variant - can be 't' (tiny), 's' (small), or 'b' (base)
         self.model_variant = 's'  # Default to small model
         
-    @staticmethod  
-    def build_network_architecture(architecture_class_name: str,
+    def build_network_architecture(self, architecture_class_name: str,
                                    arch_init_kwargs: dict,
                                    arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
                                    num_input_channels: int,
                                    num_output_channels: int,
-                                   enable_deep_supervision: bool = True) -> torch.nn.Module:
-        """
-        Build the TE-Swin UNet3D network architecture.
+                                   enable_deep_supervision: bool = True):
+        """Build TE-Swin UNet3D architecture.
+        
+        We override this method to use our custom TE-Swin UNet3D models instead of the
+        standard nnUNet architecture.
         
         Args:
-            architecture_class_name: Name of the architecture class (not used in this implementation)
-            arch_init_kwargs: Architecture initialization kwargs (not used in this implementation)
-            arch_init_kwargs_req_import: Required imports (not used in this implementation)
+            architecture_class_name: Not used, we override with our model
+            arch_init_kwargs: Not used, we override with our model
+            arch_init_kwargs_req_import: Not used, we override with our model
             num_input_channels: Number of input channels
-            num_output_channels: Number of output channels/classes
-            enable_deep_supervision: Whether to enable deep supervision
+            num_output_channels: Number of output channels
+            enable_deep_supervision: Whether to use deep supervision
             
         Returns:
-            torch.nn.Module: TE-Swin UNet3D model
+            TE-Swin UNet3D model
         """
-        # Create TE-Swin UNet3D model (small variant by default)
-        model = create_te_swinunet_s_3d(
-            input_channels=num_input_channels,
-            num_classes=num_output_channels,
-            deep_supervision=enable_deep_supervision,
-            # Use fixed window size for now
-            window_size=7,
-            dropout=0.0,
-        )
+        self.print_to_log_file(f"Using TE-SwinUnet3D-{self.model_variant} variant")
         
-        print(f"Created TE-Swin UNet3D with {num_input_channels} input channels, "
-              f"{num_output_channels} output classes, deep supervision: {enable_deep_supervision}")
+        # Use different model creation function based on model variant
+        if self.model_variant == 't':
+            network = create_te_swinunet_t_3d(
+                in_channels=num_input_channels,
+                out_channels=num_output_channels,
+                enable_deep_supervision=enable_deep_supervision
+            )
+        elif self.model_variant == 'b':
+            network = create_te_swinunet_b_3d(
+                in_channels=num_input_channels,
+                out_channels=num_output_channels,
+                enable_deep_supervision=enable_deep_supervision
+            )
+        else:  # Default to 's' (small) model
+            network = create_te_swinunet_s_3d(
+                in_channels=num_input_channels,
+                out_channels=num_output_channels,
+                enable_deep_supervision=enable_deep_supervision
+            )
         
-        return model
+        return network
+        
+    def run_training(self):
+        """Run training with progress bars for each epoch.
+        
+        Override the parent class method to add progress bars using tqdm.
+        """
+        self.on_train_start()
+
+        for epoch in range(self.current_epoch, self.num_epochs):
+            self.on_epoch_start()
+            
+            # Training phase with progress bar
+            self.on_train_epoch_start()
+            train_outputs = []
+            train_iterator = tqdm(
+                range(self.num_iterations_per_epoch),
+                desc=f"Epoch {epoch} Training",
+                unit="batch",
+                colour="green",
+                leave=False,
+                bar_format='{l_bar}{bar:30}{r_bar}'
+            )
+            
+            for batch_id in train_iterator:
+                batch = next(self.dataloader_train)
+                output = self.train_step(batch)
+                train_outputs.append(output)
+                # Update progress bar with current loss
+                if 'loss' in output:
+                    train_iterator.set_postfix({"loss": f"{output['loss']:.4f}"})
+                    
+            self.on_train_epoch_end(train_outputs)
+            
+            # Validation phase with progress bar
+            with torch.no_grad():
+                self.on_validation_epoch_start()
+                val_outputs = []
+                val_iterator = tqdm(
+                    range(self.num_val_iterations_per_epoch),
+                    desc=f"Epoch {epoch} Validation",
+                    unit="batch",
+                    colour="blue",
+                    leave=False,
+                    bar_format='{l_bar}{bar:30}{r_bar}'
+                )
+                
+                for batch_id in val_iterator:
+                    batch = next(self.dataloader_val)
+                    output = self.validation_step(batch)
+                    val_outputs.append(output)
+                    # Update progress bar with current loss
+                    if 'loss' in output:
+                        val_iterator.set_postfix({"loss": f"{output['loss']:.4f}"})
+                        
+                self.on_validation_epoch_end(val_outputs)
+            
+            self.on_epoch_end()
+            
+            # Print completion message for the epoch
+            self.print_to_log_file(f"Epoch {epoch} completed", also_print_to_console=True)
 
     def set_deep_supervision_enabled(self, enabled: bool):
         """
