@@ -266,15 +266,9 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         original_shape = x.shape[2:]  # D, H, W
         b, c = x.shape[:2]
         
-        # Check input dimensions for compatibility
-        valid, message = self.validate_dimensions(original_shape)
-        padding_applied = False
-        padding_info = None
-        
-        if not valid:
-            # Try to make compatible by padding and record padding info
-            x, padding_info = self._pad_to_compatible_size_with_info(x)
-            padding_applied = True
+        # 检查并padding输入以满足架构需求
+        padded_x, padding_info = self._ensure_compatible_size(x)
+        x = padded_x
         
         # Store features for deep supervision
         deep_supervision_outputs = []
@@ -366,18 +360,16 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         x = self.final(x)
         main_output = self.seg_head(x)
         
-        # 关键修复：如果应用了padding，需要将所有输出裁剪回原始尺寸
-        if padding_applied and padding_info is not None:
-            main_output = self._crop_to_original_size(main_output, original_shape, padding_info)
-            
-            # 同样处理深度监督输出
+        # 核心修复：确保输出匹配原始输入尺寸
+        if padding_info['applied']:
+            main_output = self._crop_to_original(main_output, original_shape)
             if self._deep_supervision and self.training and deep_supervision_outputs:
                 deep_supervision_outputs = [
-                    self._crop_to_original_size(ds_out, original_shape, padding_info)
+                    self._crop_to_original(ds_out, original_shape) 
                     for ds_out in deep_supervision_outputs
                 ]
         
-        # 额外安全检查：确保输出尺寸正确
+        # 最终尺寸检查和调整
         expected_shape = (b, self.num_classes) + original_shape
         if main_output.shape != expected_shape:
             main_output = F.interpolate(main_output, size=original_shape, mode='trilinear', align_corners=False)
@@ -385,9 +377,11 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         # Return outputs based on training mode
         if self._deep_supervision and self.training:
             # 检查深度监督输出尺寸
-            for i, ds_out in enumerate(deep_supervision_outputs):
-                if ds_out.shape != expected_shape:
-                    deep_supervision_outputs[i] = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
+            for i in range(len(deep_supervision_outputs)):
+                if deep_supervision_outputs[i].shape != expected_shape:
+                    deep_supervision_outputs[i] = F.interpolate(
+                        deep_supervision_outputs[i], size=original_shape, mode='trilinear', align_corners=False
+                    )
             
             # Return list of outputs for deep supervision
             all_outputs = [main_output] + deep_supervision_outputs
@@ -395,93 +389,63 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         else:
             return main_output
     
-    def _pad_to_compatible_size_with_info(self, x):
+    def _ensure_compatible_size(self, x):
         """
-        Pad input to make it compatible with the model architecture.
-        返回padding信息以便后续裁剪
+        确保输入尺寸与模型架构兼容，返回padding后的tensor和padding信息
         """
+        b, c, d, h, w = x.shape
+        original_size = (d, h, w)
+        
         window_size = self.window_size
         if isinstance(window_size, int):
             window_size = [window_size] * 3
         
-        b, c, d, h, w = x.shape
-        original_size = (d, h, w)
-        
-        # Calculate required padding for each dimension
+        # 计算总的下采样倍数
         total_downscale = 1
         for dsf in self.dsf:
             total_downscale *= dsf
         
+        # 计算目标尺寸
         target_d = ((d + total_downscale - 1) // total_downscale) * total_downscale
-        target_h = ((h + total_downscale - 1) // total_downscale) * total_downscale
+        target_h = ((h + total_downscale - 1) // total_downscale) * total_downscale  
         target_w = ((w + total_downscale - 1) // total_downscale) * total_downscale
         
-        # Further ensure compatibility with window size
+        # 确保与window_size兼容
         target_d = ((target_d + window_size[0] - 1) // window_size[0]) * window_size[0]
         target_h = ((target_h + window_size[1] - 1) // window_size[1]) * window_size[1]
         target_w = ((target_w + window_size[2] - 1) // window_size[2]) * window_size[2]
         
         padding_info = {
+            'applied': False,
             'original_size': original_size,
-            'target_size': (target_d, target_h, target_w),
-            'padding_applied': False
+            'target_size': (target_d, target_h, target_w)
         }
         
         if target_d != d or target_h != h or target_w != w:
+            # 需要padding
             pad_d = target_d - d
-            pad_h = target_h - h
+            pad_h = target_h - h  
             pad_w = target_w - w
             
-            padding = (
-                0, pad_w,     # W dimension
-                0, pad_h,     # H dimension  
-                0, pad_d      # D dimension
-            )
-            x = F.pad(x, padding, mode='constant', value=0)
+            # F.pad的参数顺序是从最后一个维度开始：(left, right, top, bottom, front, back)
+            padding = (0, pad_w, 0, pad_h, 0, pad_d)
+            x_padded = F.pad(x, padding, mode='constant', value=0)
             
             padding_info.update({
-                'padding_applied': True,
-                'padding': padding,
-                'pad_d': pad_d,
-                'pad_h': pad_h,
-                'pad_w': pad_w
+                'applied': True,
+                'padding': (pad_d, pad_h, pad_w)
             })
             
-        return x, padding_info
+            return x_padded, padding_info
+        else:
+            return x, padding_info
     
-    def _crop_to_original_size(self, output, original_shape, padding_info):
+    def _crop_to_original(self, output, original_shape):
         """
         将输出裁剪回原始尺寸
         """
-        if not padding_info['padding_applied']:
-            return output
-        
         d_orig, h_orig, w_orig = original_shape
-        b, c, d_curr, h_curr, w_curr = output.shape
-        
-        # 裁剪到原始尺寸
-        output_cropped = output[:, :, :d_orig, :h_orig, :w_orig]
-        
-        return output_cropped
-    
-    def validate_dimensions(self, input_shape):
-        """Validate that dimensions are compatible with the model architecture."""
-        window_size = self.window_size
-        if isinstance(window_size, int):
-            window_size = [window_size] * 3
-        
-        # Check basic compatibility
-        for i, dim in enumerate(input_shape):
-            if dim % window_size[i] != 0:
-                return False, f"Input dimension {i} (size {dim}) must be divisible by window_size {window_size[i]}"
-            # Check compatibility with downscaling
-            total_downscale = 1
-            for dsf in self.dsf:
-                total_downscale *= dsf
-            if dim % total_downscale != 0:
-                return False, f"Input dimension {i} (size {dim}) must be divisible by total downscale factor {total_downscale}"
-        
-        return True, "All dimensions are compatible"
+        return output[:, :, :d_orig, :h_orig, :w_orig]
     
     def init_weights(self):
         """Initialize model weights."""
