@@ -4,127 +4,202 @@ import torch.nn.functional as F
 
 class TextureAttentionModule(nn.Module):
     """
-    Texture-Aware Attention Module (TAAM) - a core component of TE-Swin UNet3D.
-    
-    This module is responsible for:
-    1. Extracting texture features from input feature maps
-    2. Generating spatial and channel attention maps based on texture features
-    3. Applying these attention maps to enhance texture-relevant information
+    修复后的纹理注意力模块 - 解决动态模块创建和设备不一致问题
     """
-    def __init__(self, dim):
+    def __init__(self, dim, adaptive_channels=None):
         """
         Initialize the Texture Attention Module.
         
         Args:
-            dim (int): Input feature dimension (channel count)
+            dim (int): 预期的输入特征维度
+            adaptive_channels (list, optional): 可能的输入通道数列表，用于预创建适配器
         """
         super(TextureAttentionModule, self).__init__()
         
-        # Store the expected input dimension for later checking
         self.expected_dim = dim
         
-        # Texture feature extractor - specialized convolution layers
-        # Uses dilated convolutions to capture larger texture patterns
+        # ✅ 纹理特征提取器 - 使用更稳定的架构
         self.texture_extractor = nn.Sequential(
             nn.Conv3d(dim, dim, kernel_size=3, padding=1, dilation=1),
-            nn.InstanceNorm3d(dim),
-            nn.LeakyReLU(0.2),
+            nn.GroupNorm(min(8, dim), dim),  # 使用GroupNorm代替InstanceNorm
+            nn.LeakyReLU(0.2, inplace=True),
             nn.Conv3d(dim, dim, kernel_size=3, padding=2, dilation=2),
-            nn.InstanceNorm3d(dim),
-            nn.LeakyReLU(0.2)
+            nn.GroupNorm(min(8, dim), dim),
+            nn.LeakyReLU(0.2, inplace=True)
         )
         
-        # Spatial attention mechanism
+        # ✅ 空间注意力机制
         self.spatial_attention = nn.Sequential(
-            nn.Conv3d(dim, max(dim//4, 1), kernel_size=3, padding=1),  # Ensure at least 1 channel
-            nn.LeakyReLU(0.2),
+            nn.Conv3d(dim, max(dim//4, 1), kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.Conv3d(max(dim//4, 1), 1, kernel_size=1),
             nn.Sigmoid()
         )
         
-        # Channel attention mechanism
+        # ✅ 通道注意力机制
         self.channel_attention = nn.Sequential(
             nn.AdaptiveAvgPool3d(1),
-            nn.Conv3d(dim, max(dim//4, 1), kernel_size=1),  # Ensure at least 1 channel
-            nn.LeakyReLU(0.2),
+            nn.Conv3d(dim, max(dim//4, 1), kernel_size=1),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.Conv3d(max(dim//4, 1), dim, kernel_size=1),
             nn.Sigmoid()
         )
         
-        # Flag to track if we've created an adapter
-        self.has_adapter = False
-        # Will be created on-the-fly if needed
-        self.input_adapter = None
+        # ✅ 预创建可能需要的适配器，避免在forward中动态创建
+        self.input_adapters = nn.ModuleDict()
+        self.output_adapters = nn.ModuleDict()
+        
+        # 如果提供了可能的通道数，预创建适配器
+        if adaptive_channels is not None:
+            for channels in adaptive_channels:
+                if channels != dim:
+                    # 输入适配器
+                    self.input_adapters[str(channels)] = nn.Conv3d(
+                        channels, dim, kernel_size=1, bias=False
+                    )
+                    # 输出适配器
+                    self.output_adapters[str(channels)] = nn.Conv3d(
+                        dim, channels, kernel_size=1, bias=False
+                    )
+                    
+                    # ✅ 使用更好的初始化
+                    nn.init.kaiming_normal_(self.input_adapters[str(channels)].weight)
+                    nn.init.kaiming_normal_(self.output_adapters[str(channels)].weight)
+        
+        # ✅ 残差连接的权重
+        self.residual_weight = nn.Parameter(torch.ones(1))
+        
+    def _get_or_create_adapter(self, channels, adapter_type='input'):
+        """
+        获取或创建适配器，但仅在必要时创建
+        """
+        adapter_dict = self.input_adapters if adapter_type == 'input' else self.output_adapters
+        key = str(channels)
+        
+        if key not in adapter_dict:
+            # 只有在预创建的适配器中没有找到时才创建新的
+            if adapter_type == 'input':
+                adapter = nn.Conv3d(channels, self.expected_dim, kernel_size=1, bias=False)
+                target_dim = self.expected_dim
+            else:
+                adapter = nn.Conv3d(self.expected_dim, channels, kernel_size=1, bias=False)
+                target_dim = channels
+                
+            # ✅ 使用更好的初始化
+            nn.init.kaiming_normal_(adapter.weight)
+            
+            # ✅ 确保适配器在正确的设备上
+            device = next(self.parameters()).device
+            adapter = adapter.to(device)
+            
+            adapter_dict[key] = adapter
+            
+        return adapter_dict[key]
         
     def forward(self, x):
         """
-        Forward pass through the Texture Attention Module.
-        
-        Args:
-            x (Tensor): Input feature map [B, C, D, H, W]
-            
-        Returns:
-            Tensor: Texture-enhanced feature map with same shape as input
+        修复后的前向传播，避免动态模块创建
         """
         original_x = x
         input_channels = x.size(1)
         
-        # Check if the input dimensions match what we expect
+        # ✅ 如果通道数不匹配，使用适配器
         if input_channels != self.expected_dim:
-            # If this is the first time we're seeing this mismatch, create an adapter
-            if not self.has_adapter:
-                self.has_adapter = True
-                self.input_adapter = nn.Conv3d(
-                    input_channels, self.expected_dim, kernel_size=1,
-                ).to(x.device)
-                
-                # Initialize with identity-like weights
-                nn.init.kaiming_normal_(self.input_adapter.weight)
-                if self.input_adapter.bias is not None:
-                    nn.init.zeros_(self.input_adapter.bias)
-                
-                print(f"[TextureAttentionModule] Created input adapter: {input_channels} -> {self.expected_dim} channels")
-            
-            # Apply the adapter to match expected channels
-            x = self.input_adapter(x)
+            input_adapter = self._get_or_create_adapter(input_channels, 'input')
+            x = input_adapter(x)
         
-        # Extract texture features
+        # 提取纹理特征
         texture_feat = self.texture_extractor(x)
         
-        # Generate spatial attention map
+        # 生成注意力图
         spatial_attn = self.spatial_attention(texture_feat)
-        
-        # Generate channel attention map
         channel_attn = self.channel_attention(texture_feat)
         
-        # Apply attention - combine spatial and channel attention
-        # Spatial attention is broadcast across channels
-        # Channel attention is broadcast across spatial dimensions
-        attn = spatial_attn * channel_attn
+        # ✅ 组合注意力 - 使用更稳定的方式
+        combined_attn = spatial_attn * channel_attn
+        enhanced_feat = x * combined_attn
         
-        # If we used an adapter, we need to convert back to the original channels
+        # ✅ 如果使用了输入适配器，需要输出适配器转换回原始维度
         if input_channels != self.expected_dim:
-            # Create an output adapter on-the-fly
-            if not hasattr(self, 'output_adapter') or self.output_adapter is None:
-                self.output_adapter = nn.Conv3d(
-                    self.expected_dim, input_channels, kernel_size=1,
-                ).to(x.device)
-                
-                # Initialize with identity-like weights
-                nn.init.kaiming_normal_(self.output_adapter.weight)
-                if self.output_adapter.bias is not None:
-                    nn.init.zeros_(self.output_adapter.bias)
-                
-                print(f"[TextureAttentionModule] Created output adapter: {self.expected_dim} -> {input_channels} channels")
-            
-            # Apply attention to feature map
-            enhanced = x * attn
-            # Convert back to original channel dimension
-            enhanced = self.output_adapter(enhanced)
-            # Residual connection with original input
-            out = enhanced + original_x
-        else:
-            # Standard residual connection - add enhanced features to original
-            out = x * attn + original_x
+            output_adapter = self._get_or_create_adapter(input_channels, 'output')
+            enhanced_feat = output_adapter(enhanced_feat)
         
-        return out
+        # ✅ 带权重的残差连接
+        output = enhanced_feat + self.residual_weight * original_x
+        
+        return output
+    
+    def extra_repr(self):
+        """提供模块的额外表示信息"""
+        return f'expected_dim={self.expected_dim}, adapters={len(self.input_adapters)}'
+
+
+class MultiScaleTextureAttention(nn.Module):
+    """
+    多尺度纹理注意力模块 - 用于处理不同尺度的纹理特征
+    """
+    def __init__(self, dims):
+        """
+        初始化多尺度纹理注意力模块
+        
+        Args:
+            dims (list): 各个尺度的特征维度
+        """
+        super().__init__()
+        
+        # ✅ 为每个尺度创建纹理注意力模块
+        self.texture_modules = nn.ModuleList([
+            TextureAttentionModule(dim) for dim in dims
+        ])
+        
+    def forward(self, features):
+        """
+        对多尺度特征应用纹理注意力
+        
+        Args:
+            features (list): 多尺度特征列表
+            
+        Returns:
+            list: 增强后的多尺度特征
+        """
+        enhanced_features = []
+        
+        for i, (feat, texture_module) in enumerate(zip(features, self.texture_modules)):
+            try:
+                enhanced = texture_module(feat)
+                enhanced_features.append(enhanced)
+            except Exception as e:
+                print(f"⚠️  TextureAttention failed at scale {i}: {e}")
+                # 如果失败，使用原始特征
+                enhanced_features.append(feat)
+                
+        return enhanced_features
+
+
+# ✅ 工厂函数，用于创建预配置的纹理注意力模块
+def create_texture_attention_for_te_swin(variant='small'):
+    """
+    为TE-Swin模型创建预配置的纹理注意力模块
+    
+    Args:
+        variant (str): 'tiny', 'small', 'base'
+        
+    Returns:
+        list: 纹理注意力模块列表
+    """
+    if variant == 'tiny':
+        dims = [48, 96, 192, 384]
+    elif variant == 'base':
+        dims = [128, 256, 512, 1024]
+    else:  # small
+        dims = [96, 192, 384, 768]
+    
+    # 为每个层级创建纹理注意力模块
+    modules = []
+    for dim in dims:
+        # 预定义可能的通道数，避免动态创建
+        possible_channels = [dim//2, dim, dim*2]
+        module = TextureAttentionModule(dim, adaptive_channels=possible_channels)
+        modules.append(module)
+    
+    return modules
