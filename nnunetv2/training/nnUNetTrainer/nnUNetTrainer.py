@@ -217,7 +217,7 @@ class nnUNetTrainer(object):
             # compile network for free speedup
             if self._do_i_compile():
                 self.print_to_log_file('Using torch.compile...')
-                self.network = torch.compile(self.network)
+                # self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
             # if ddp, wrap in DDP wrapper
