@@ -216,9 +216,9 @@ class nnUNetTrainer(object):
                 self.enable_deep_supervision
             ).to(self.device)
             # compile network for free speedup
-            if self._do_i_compile():
-                self.print_to_log_file('Using torch.compile...')
-                self.network = torch.compile(self.network)
+            # if self._do_i_compile():
+            #     self.print_to_log_file('Using torch.compile...')
+            #     self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
             # if ddp, wrap in DDP wrapper
@@ -231,8 +231,8 @@ class nnUNetTrainer(object):
             self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
 
             # torch 2.2.2 crashes upon compiling CE loss
-            if self._do_i_compile():
-                self.loss = torch.compile(self.loss)
+            # if self._do_i_compile():
+            #     self.loss = torch.compile(self.loss)
             self.was_initialized = True
         else:
             raise RuntimeError("You have called self.initialize even though the trainer was already initialized. "
@@ -401,8 +401,8 @@ class nnUNetTrainer(object):
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
-        if self._do_i_compile():
-            loss.dc = torch.compile(loss.dc)
+        # if self._do_i_compile():
+        #     loss.dc = torch.compile(loss.dc)
 
         # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
         # this gives higher resolution outputs more weight in the loss

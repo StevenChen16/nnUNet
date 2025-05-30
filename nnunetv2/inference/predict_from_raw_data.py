@@ -123,10 +123,10 @@ class nnUNetPredictor(object):
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
-        if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
-                and not isinstance(self.network, OptimizedModule):
-            print('Using torch.compile')
-            self.network = torch.compile(self.network)
+        # if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
+        #         and not isinstance(self.network, OptimizedModule):
+        #     print('Using torch.compile')
+        #     self.network = torch.compile(self.network)
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
@@ -149,9 +149,9 @@ class nnUNetPredictor(object):
         allow_compile = allow_compile and not isinstance(self.network, OptimizedModule)
         if isinstance(self.network, DistributedDataParallel):
             allow_compile = allow_compile and isinstance(self.network.module, OptimizedModule)
-        if allow_compile:
-            print('Using torch.compile')
-            self.network = torch.compile(self.network)
+        # if allow_compile:
+        #     print('Using torch.compile')
+        #     self.network = torch.compile(self.network)
 
     @staticmethod
     def auto_detect_available_folds(model_training_output_dir, checkpoint_name):
