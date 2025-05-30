@@ -275,9 +275,6 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         if padding_info['applied']:
             print(f"🔍 DEBUG: Applied padding, new shape: {x.shape}")
         
-        # Store features for deep supervision
-        deep_supervision_outputs = []
-        
         # Encoder pathway with texture and temporal attention
         encoder_features = []  # Original features from encoder
         texture_features = []  # Texture-enhanced features
@@ -319,6 +316,9 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         # Create multi-scale texture pyramid
         texture_pyramid = self.texture_pyramid(texture_features)
         
+        # Store decoder features for deep supervision
+        decoder_features = []
+        
         # Decoder pathway with shape-texture fusion
         
         # Stage 4 decoder
@@ -327,7 +327,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         texture_feat = texture_pyramid[2]
         fused_feat = self.fusion_modules[2](shape_feat, texture_feat)
         x = self.converge4(x, fused_feat)
-        
+        decoder_features.append(x)
         print(f"🔍 DEBUG: After dec4, shape: {x.shape}")
         
         # Stage 3 decoder
@@ -336,7 +336,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         texture_feat = texture_pyramid[1]
         fused_feat = self.fusion_modules[1](shape_feat, texture_feat)
         x = self.converge3(x, fused_feat)
-        
+        decoder_features.append(x)
         print(f"🔍 DEBUG: After dec3, shape: {x.shape}")
         
         # Stage 1-2 decoder
@@ -345,7 +345,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         texture_feat = texture_pyramid[0]
         fused_feat = self.fusion_modules[0](shape_feat, texture_feat)
         x = self.converge12(x, fused_feat)
-        
+        decoder_features.append(x)
         print(f"🔍 DEBUG: After dec12, shape: {x.shape}")
         
         # Final upsampling and output head
@@ -355,29 +355,7 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
         main_output = self.seg_head(x)
         print(f"🔍 DEBUG: Main output shape before processing: {main_output.shape}")
         
-        # 处理深度监督输出（如果启用）
-        if self._deep_supervision and self.training:
-            print("🔍 DEBUG: Processing deep supervision outputs...")
-            
-            # 从所有decoder阶段收集深度监督输出
-            ds_features = [
-                encoder_features[3],  # bottleneck 
-                encoder_features[2],  # stage4
-                encoder_features[1],  # stage3  
-                encoder_features[0]   # stage1-2
-            ]
-            
-            for i, feat in enumerate(ds_features):
-                ds_out = self.deep_supervision_heads[i](feat)
-                print(f"🔍 DEBUG: DS output {i} before interpolation: {ds_out.shape}")
-                
-                # 直接插值到原始输入尺寸
-                ds_out_resized = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
-                print(f"🔍 DEBUG: DS output {i} after interpolation: {ds_out_resized.shape}")
-                
-                deep_supervision_outputs.append(ds_out_resized)
-        
-        # 核心修复：确保输出匹配原始输入尺寸
+        # 核心修复：确保主输出匹配原始输入尺寸
         if padding_info['applied']:
             main_output = self._crop_to_original(main_output, original_shape)
             print(f"🔍 DEBUG: Main output after cropping: {main_output.shape}")
@@ -389,8 +367,36 @@ class nnUNet_TE_SwinUnet3D(nn.Module):
             main_output = F.interpolate(main_output, size=original_shape, mode='trilinear', align_corners=False)
             print(f"🔍 DEBUG: Main output after final interpolation: {main_output.shape}")
         
-        # Return outputs based on training mode
+        # 处理深度监督输出（如果启用）
         if self._deep_supervision and self.training:
+            print("🔍 DEBUG: Processing deep supervision outputs...")
+            
+            deep_supervision_outputs = []
+            
+            # 使用decoder features和bottleneck feature来生成深度监督输出
+            ds_source_features = [
+                encoder_features[3],  # bottleneck (最低分辨率)
+                decoder_features[0],  # dec4 output
+                decoder_features[1],  # dec3 output  
+                decoder_features[2],  # dec12 output
+            ]
+            
+            for i, feat in enumerate(ds_source_features):
+                ds_out = self.deep_supervision_heads[i](feat)
+                print(f"🔍 DEBUG: DS output {i} before interpolation: {ds_out.shape}")
+                
+                # 先裁剪（如果需要）
+                if padding_info['applied']:
+                    ds_out = self._crop_to_original(ds_out, original_shape)
+                    print(f"🔍 DEBUG: DS output {i} after cropping: {ds_out.shape}")
+                
+                # 然后插值到原始尺寸
+                if ds_out.shape[2:] != original_shape:
+                    ds_out = F.interpolate(ds_out, size=original_shape, mode='trilinear', align_corners=False)
+                    print(f"🔍 DEBUG: DS output {i} after interpolation: {ds_out.shape}")
+                
+                deep_supervision_outputs.append(ds_out)
+            
             print(f"🔍 DEBUG: Returning {len(deep_supervision_outputs) + 1} outputs for deep supervision")
             for i, ds_out in enumerate(deep_supervision_outputs):
                 print(f"🔍 DEBUG: Final DS output {i} shape: {ds_out.shape}")
