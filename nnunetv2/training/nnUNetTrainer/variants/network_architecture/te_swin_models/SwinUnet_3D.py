@@ -11,9 +11,9 @@ from einops import rearrange as einops_rearrange
 @dynamo.disable
 def rearrange(tensor, pattern, **axes_lengths):
     """Simple rearrange implementation for basic patterns"""
-    # 添加调试信息 - 防止在非分布式环境中报错
-    is_main_process = not torch.distributed.is_available() or not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
-    if is_main_process:
+    # 只在需要时输出调试信息
+    debug = False  # 设置为True打开调试信息
+    if debug:
         print(f"Rearrange pattern: {pattern}")
         print(f"Input tensor shape: {tensor.shape}")
         print(f"Parameters: {axes_lengths}")
@@ -106,16 +106,9 @@ def rearrange(tensor, pattern, **axes_lengths):
                 w_z = depth
                 print(f"Fallback to: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}]")
         
-        try:
-            # 使用安全的reshape操作
-            reshaped = tensor.view(b, nw_x, w_x, nw_y, w_y, nw_z, w_z, h, d)
-            return reshaped.permute(0, 7, 1, 3, 5, 2, 4, 6, 8).contiguous().view(b, h, nw_x*nw_y*nw_z, w_x*w_y*w_z, d)
-        except RuntimeError as e:
-            print(f"Reshape error: {e}")
-            print(f"Tensor size: {tensor.size()}, numel: {tensor.numel()}")
-            print(f"Target shape: [{b}, {nw_x}, {w_x}, {nw_y}, {w_y}, {nw_z}, {w_z}, {h}, {d}] = {b * nw_x * w_x * nw_y * w_y * nw_z * w_z * h * d}")
-            # 最终回退方案 - 跳过窗口重塑，返回原始张量
-            return tensor
+        # 直接执行固定形状的reshape操作
+        reshaped = tensor.view(b, nw_x, w_x, nw_y, w_y, nw_z, w_z, h, d)
+        return reshaped.permute(0, 7, 1, 3, 5, 2, 4, 6, 8).contiguous().view(b, h, nw_x*nw_y*nw_z, w_x*w_y*w_z, d)
     elif pattern.startswith('b h (nw_x nw_y nw_z) (w_x w_y w_z) d -> b (nw_x w_x) (nw_y w_y) (nw_z w_z) (h d)'):
         # For window attention reverse reshape
         b, h, num_windows, window_size, d = tensor.shape
@@ -173,26 +166,9 @@ def rearrange(tensor, pattern, **axes_lengths):
             print(f"Adjusted to: windows=[{nw_x}×{nw_y}×{nw_z}]={nw_x*nw_y*nw_z}, "
                   f"window_size=[{w_x}×{w_y}×{w_z}]={w_x*w_y*w_z}")
         
-        try:
-            # 使用安全的reshape操作
-            reshaped = tensor.view(b, h, nw_x, nw_y, nw_z, w_x, w_y, w_z, d)
-            return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(b, nw_x*w_x, nw_y*w_y, nw_z*w_z, h*d)
-        except RuntimeError as e:
-            print(f"Reshape error: {e}")
-            print(f"Tensor size: {tensor.size()}, numel: {tensor.numel()}")
-            print(f"Target shape: [{b}, {h}, {nw_x}, {nw_y}, {nw_z}, {w_x}, {w_y}, {w_z}, {d}] = "
-                  f"{b * h * nw_x * nw_y * nw_z * w_x * w_y * w_z * d}")
-            
-            # 尝试使用原始参数
-            try:
-                print("Trying original parameters...")
-                reshaped = tensor.view(b, h, orig_nw_x, orig_nw_y, orig_nw_z, orig_w_x, orig_w_y, orig_w_z, d)
-                return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(
-                    b, orig_nw_x*orig_w_x, orig_nw_y*orig_w_y, orig_nw_z*orig_w_z, h*d)
-            except RuntimeError:
-                # 最终回退方案 - 跳过窗口重塑，返回原始张量的简单重排
-                print("Fallback to simple reshape")
-                return tensor.view(b, h*d, num_windows, window_size).permute(0, 2, 3, 1).contiguous()
+        # 直接执行正确计算的reshape操作
+        reshaped = tensor.view(b, h, nw_x, nw_y, nw_z, w_x, w_y, w_z, d)
+        return reshaped.permute(0, 2, 5, 3, 6, 4, 7, 1, 8).contiguous().view(b, nw_x*w_x, nw_y*w_y, nw_z*w_z, h*d)
     elif 'b h (n_x n_y n_z) i j -> b h n_y n_z n_x i j' in pattern:
         # For attention mask rearrangement
         b, h, n_total, i, j = tensor.shape
