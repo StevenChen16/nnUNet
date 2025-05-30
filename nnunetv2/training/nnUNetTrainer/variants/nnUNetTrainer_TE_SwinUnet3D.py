@@ -23,17 +23,19 @@ class nnUNetTrainer_TE_SwinUnet3D(nnUNetTrainer):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True
+        unpack_dataset: bool = True,
+        device: torch.device = torch.device('cuda')
     ):
         """
         Initialize the TE-Swin UNet3D trainer.
         """
-        # 调用父类初始化，nnUNetTrainer不接受unpack_dataset参数
-        super().__init__(plans, configuration, fold, dataset_json)
+        # 调用父类初始化，只传递父类需要的参数
+        super().__init__(plans, configuration, fold, dataset_json, device)
         
         print("🎯 TE-Swin UNet3D Trainer initialized")
         print(f"   - Configuration: {configuration}")
         print(f"   - Fold: {fold}")
+        print(f"   - Device: {self.device}")
         print(f"   - Deep supervision: {self.enable_deep_supervision}")
         
     def build_network_architecture(self, architecture_class_name: str,
